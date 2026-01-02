@@ -3,7 +3,8 @@ import os
 from typing import Dict, Any, List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from jsonpath_ng import parse
+from jsonpath_ng.ext import parse
+
 import logging
 logging.basicConfig(
     level=logging.INFO,
@@ -18,31 +19,13 @@ from vnet.common.config.env import load_env
 load_env(dotenv_path=os.path.join(BASE_DIR, ".env"), override=False)
 
 from vnet.common.storage.dal.minio.minio_conn import minio_handler
-from vnet.common.tools.http_utils import multiple_download_thread_with_thread
+from vnet.common.tools.http_utils import multiple_download_thread_with_thread, multiple_download_async
 
 app = FastAPI(title="Accessibility API", version="1.0.0")
 
 class DownloadRequest(BaseModel):
     download_url_jsonpath: List[str]
     data: List[Dict[str, Any]]
-
-
-def _set_match_value_in_place(match, new_value):
-    """Safely replace a matched value in-place without copying."""
-    if match.context is None:
-        return False
-    container = match.context.value
-    if isinstance(container, dict):
-        for k, v in container.items():
-            if v == match.value:
-                container[k] = new_value
-                return True
-    elif isinstance(container, list):
-        for i, v in enumerate(container):
-            if v == match.value:
-                container[i] = new_value
-                return True
-    return False
 
 @app.post("/v1/download-and-upload")
 async def download_and_upload(request: DownloadRequest):
@@ -69,8 +52,14 @@ async def download_and_upload(request: DownloadRequest):
         if not urls:
             return search_data
 
+        proxy = {
+            "http": os.getenv("HTTP_PROXY"),
+            "https": os.getenv("HTTPS_PROXY")
+        } if os.getenv("HTTP_PROXY") else None
+
+        logger.info(f"Proxy: {proxy}")
         # Download files
-        downloaded_files = multiple_download_thread_with_thread(urls)
+        downloaded_files = await multiple_download_async(urls, proxy=proxy)
         logger.info(f"Downloaded files: {downloaded_files}")
         url_map = {}
         # Upload to MinIO
@@ -101,17 +90,26 @@ async def download_and_upload(request: DownloadRequest):
                 except Exception:
                     pass
         logging.info(f"URL map for replacement: {url_map}")
-        # Update data (in-place, no copies)
+        
+        # Update data using jsonpath-ng-ext's update capability
         replaced = 0
-        for match in all_matches:
-            if match.value not in url_map:
+        for path_str in request.download_url_jsonpath:
+            try:
+                jsonpath_expr = parse(path_str)
+                # Find all matches for this path
+                matches = jsonpath_expr.find(search_data)
+                for match in matches:
+                    old_url = match.value
+                    if isinstance(old_url, str) and old_url in url_map:
+                        # Update the value using jsonpath-ng-ext's update method
+                        jsonpath_expr.update(search_data, url_map[old_url])
+                        replaced += 1
+                        logger.debug(f"Replaced {old_url} -> {url_map[old_url]}")
+            except Exception as e:
+                logger.error(f"Error updating jsonpath {path_str}: {e}")
                 continue
-            if _set_match_value_in_place(match, url_map[match.value]):
-                replaced += 1
-            else:
-                logger.warning(f"Failed to update match for value: {match.value}")
 
-        logger.info(f"Replaced {replaced} urls (in-place) out of {len(all_matches)} matches")
+        logger.info(f"Replaced {replaced} urls out of {len(url_map)} mappings")
 
         logger.info(f"Response sample: {search_data}")
 
