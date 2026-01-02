@@ -23,7 +23,7 @@
 - 返回包含更新后数据的 JSON 响应。
 
 ## 依赖库
-- `jsonpath-ng`: 用于解析 JSONPath 表达式。
+- `jsonpath-ng`: 用于解析和更新 JSONPath 表达式(1.7.0+ 版本已包含 ext 扩展,支持 update 操作)。
 - `requests`: 用于 HTTP 文件下载。
 - `minio`: 用于与 MinIO 存储交互。
 
@@ -41,6 +41,18 @@
 - 确保 MinIO 存储桶已创建并配置正确。
 - 下载和上传操作可能会消耗较多时间，建议在生产环境中优化性能。
 - 处理大文件时，请注意磁盘空间和网络带宽的限制。
+
+## 环境变量配置
+
+### 超时设置
+- `DOWNLOAD_TIMEOUT`: 文件下载超时时间(秒)，默认 300 秒(5分钟)
+- `DOWNLOAD_HEAD_TIMEOUT`: HEAD 请求超时时间(秒)，默认 10 秒
+
+示例配置(`.env` 文件):
+```bash
+DOWNLOAD_TIMEOUT=300
+DOWNLOAD_HEAD_TIMEOUT=10
+```
 
 ## 测试
 - 使用文档中的请求示例进行测试。

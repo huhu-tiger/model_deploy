@@ -4,6 +4,13 @@ import requests
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
 import time
+import asyncio
+import aiohttp
+import aiofiles
+
+# 从环境变量获取超时配置,提供默认值
+DOWNLOAD_TIMEOUT = int(os.getenv("DOWNLOAD_TIMEOUT", "300"))  # 默认 300 秒 (5分钟)
+DOWNLOAD_HEAD_TIMEOUT = int(os.getenv("DOWNLOAD_HEAD_TIMEOUT", "10"))  # 默认 10 秒
 
 def download_file_via_http(url, proxy=None):
     """
@@ -13,8 +20,6 @@ def download_file_via_http(url, proxy=None):
     :param proxy: 可选，HTTP 代理地址。
     :return: 下载的临时文件路径。
     """
-    # 配置代理
-    proxies = {"http": proxy, "https": proxy} if proxy else None
 
     # 解析文件名
     parsed_url = urlparse(url)
@@ -29,7 +34,7 @@ def download_file_via_http(url, proxy=None):
         start_time = time.time()
 
         # 下载文件
-        with requests.get(url, stream=True, proxies=proxies) as response:
+        with requests.get(url, stream=True, proxies=proxy, timeout=DOWNLOAD_TIMEOUT) as response:
             response.raise_for_status()
             with open(temp_file_path, "wb") as temp_file:
                 for chunk in response.iter_content(chunk_size=1024 * 1024):
@@ -46,9 +51,6 @@ def download_file_via_http(url, proxy=None):
 
 
 def download_file_thread(url,proxy=None):
-    # 配置代理
-    proxies = {"http": proxy, "https": proxy} if proxy else None
-
     # 解析文件名
     parsed_url = urlparse(url)
     file_name = os.path.basename(parsed_url.path) or "downloaded_file"
@@ -57,12 +59,12 @@ def download_file_thread(url,proxy=None):
     temp_dir = tempfile.gettempdir()
     temp_file_path = os.path.join(temp_dir, file_name)
     THREADS = 8
-    size = int(requests.head(url).headers["Content-Length"])
+    size = int(requests.head(url, timeout=DOWNLOAD_HEAD_TIMEOUT).headers["Content-Length"])
     chunk = size // THREADS
 
     def download(start, end, idx):
         headers = {"Range": f"bytes={start}-{end}"}
-        r = requests.get(url, headers=headers, stream=True,proxies=proxies)
+        r = requests.get(url, headers=headers, stream=True, proxies=proxy, timeout=DOWNLOAD_TIMEOUT)
         with open(f"{temp_file_path}.part{idx}", "wb") as f:
             for c in r.iter_content(1024 * 1024):
                 f.write(c)
@@ -119,7 +121,7 @@ def _should_use_single_stream(url, proxy=None):
     # 对小文件或图片使用单连接下载，避免不必要的分块开销。
     proxies = {"http": proxy, "https": proxy} if proxy else None
     try:
-        resp = requests.head(url, allow_redirects=True, proxies=proxies, timeout=5)
+        resp = requests.head(url, allow_redirects=True, proxies=proxies, timeout=DOWNLOAD_HEAD_TIMEOUT)
         content_length = int(resp.headers.get("Content-Length", 0) or 0)
         content_type = resp.headers.get("Content-Type", "").lower()
 
@@ -132,33 +134,54 @@ def _should_use_single_stream(url, proxy=None):
     return False
 
 
-def multiple_download_thread_with_thread(urls, proxy=None):
+async def download_file_async(session, url, proxy=None):
     """
-    多线程下载多个文件，使用 download_file_thread 方法。
+    异步下载单个文件。
+    """
+    try:
+        parsed_url = urlparse(url)
+        file_name = os.path.basename(parsed_url.path) or "downloaded_file"
+        temp_dir = tempfile.gettempdir()
+        temp_file_path = os.path.join(temp_dir, file_name)
 
-    :param urls: 包含多个 HTTP 文件下载地址的列表。
-    :param proxy: 可选，HTTP 代理地址。
-    :return: 包含原始文件地址与下载后地址的字典。
+        # 处理代理：aiohttp 接受字符串
+        proxy_url = proxy
+        if isinstance(proxy, dict):
+            # 优先使用 https，其次 http
+            proxy_url = proxy.get("https") or proxy.get("http")
+
+        async with session.get(url, proxy=proxy_url, timeout=DOWNLOAD_TIMEOUT) as response:
+            response.raise_for_status()
+            async with aiofiles.open(temp_file_path, 'wb') as f:
+                async for chunk in response.content.iter_chunked(1024 * 1024):
+                    await f.write(chunk)
+        return url, temp_file_path, None
+    except Exception as e:
+        return url, None, str(e)
+
+
+async def multiple_download_async(urls, proxy=None):
+    """
+    异步并发下载多个文件。
     """
     downloaded_files = {}
-    max_workers = max(1, len(urls))
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {}
+    
+    # 限制并发数
+    connector = aiohttp.TCPConnector(limit=20)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        tasks = []
         for url in urls:
-            if _should_use_single_stream(url, proxy):
-                fut = executor.submit(download_file_via_http, url, proxy)
+            tasks.append(download_file_async(session, url, proxy))
+        
+        results = await asyncio.gather(*tasks)
+        
+        for url, path, error in results:
+            if error:
+                print(f"Error downloading file {url}: {error}")
+                downloaded_files[url] = None
             else:
-                fut = executor.submit(download_file_thread, url, proxy)
-            futures[fut] = url
-
-        for future in futures:
-            url = futures[future]
-            try:
-                downloaded_files[url] = future.result()
-            except Exception as e:
-                print(f"Error downloading file from {url}: {e}")
-
+                downloaded_files[url] = path
+                
     return downloaded_files
 
 if __name__ == "__main__":
@@ -176,6 +199,6 @@ if __name__ == "__main__":
         "https://cdn1.suno.ai/8321e5f1-6545-4304-90eb-069ce032e599.mp3",
         "https://cdn2.suno.ai/image_8321e5f1-6545-4304-90eb-069ce032e599.jpeg"
     ]
-    downloaded_files = multiple_download_thread_with_thread(test_urls,proxy="http://192.168.0.2:20171")
+    downloaded_files = multiple_download_async(test_urls,proxy="http://192.168.0.2:20171")
     for url, path in downloaded_files.items():
         print(f"File from {url} downloaded to: {path}")
