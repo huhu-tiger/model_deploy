@@ -19,7 +19,7 @@ from vnet.common.config.env import load_env
 load_env(dotenv_path=os.path.join(BASE_DIR, ".env"), override=False)
 
 from vnet.common.storage.dal.minio.minio_conn import minio_handler
-from vnet.common.tools.http_utils import multiple_download_thread_with_thread, multiple_download_async
+from vnet.common.tools.http_utils import multiple_download_async
 
 app = FastAPI(title="Accessibility API", version="1.0.0")
 
