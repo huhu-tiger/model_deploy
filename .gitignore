@@ -9,3 +9,6 @@ __pycache__/
 *.pyzw
 *.pyzwz
 .gradio/
+*/images_tmp
+*/images_tmp/*
+
