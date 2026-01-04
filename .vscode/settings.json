@@ -4,5 +4,8 @@
     "python-envs.pythonProjects": [],
     "python.analysis.extraPaths": [
         "./Qwen-Image-2512/service"
+    ],
+    "cursorpyright.analysis.extraPaths": [
+        "./Qwen-Image-2512/service"
     ]
 }
