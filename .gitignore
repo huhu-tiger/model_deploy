@@ -20,3 +20,8 @@ __pycache__/
 Qwen-Image-2512/src/diffusers
 Qwen-Image-2512/src/
 images_tmp/
+*.wav
+_pycache_/
+.github
+CosyVoice/pretrained_models
+CosyVoice3/pretrained_models
