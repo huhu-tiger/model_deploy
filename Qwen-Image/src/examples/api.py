@@ -13,14 +13,16 @@ import os
 
 os.environ['MODEL_PATH'] = '/media/llm/Qwen-Image'
 os.environ['MODEL_NAME'] = 'Qwen-Image'
-os.environ['OPENAI_API_KEY'] = 'xxx'
-os.environ['OPENAI_BASE_URL'] = 'http://192.168.0.3:8002/v1'
-os.environ['OPENAI_MODEL'] = 'Qwen3-235B-A22B-Instruct-2507'
 os.environ['HF_HUB_OFFLINE'] = '1'
 os.environ['CUDA_VISIBLE_DEVICES'] = '2,6'
 os.environ['NUM_GPUS_TO_USE'] = '2'
 os.environ['IMAGE_OUTPUT_DIR'] = os.path.join(os.path.dirname(__file__), 'images_tmp')
 os.environ["IMAGE_DOWNLOAD_URL_PREFIX"] = 'http://39.155.179.4:6002/images'
+#重写提示词
+os.environ['ENABLE_PROMPT_REWRITE'] = 'false'  # 控制提示词重写功能：true=开启，false=关闭
+os.environ['OPENAI_API_KEY'] = 'xxx'
+os.environ['OPENAI_BASE_URL'] = 'http://192.168.0.3:8003/v1'
+os.environ['OPENAI_MODEL'] = 'Qwen3-235B-A22B-Instruct-2507'
 
 import torch
 import torch.multiprocessing as mp
@@ -32,6 +34,37 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from fastapi import Request
 from fastapi.staticfiles import StaticFiles
+
+from vnet.common.storage.dal.minio.minio_conn import minio_process
+# 兼容 Pydantic v2：动态导入 pydantic_settings，避免静态检查报未安装告警
+from importlib import import_module
+try:
+	BaseSettings = getattr(import_module("pydantic_settings"), "BaseSettings")  # type: ignore
+except Exception:
+	BaseSettings = None
+
+if BaseSettings is not None:
+	class MinioSettings(BaseSettings):
+		Minio_IP: str = Field(default="120.133.137.142", env="MINIO_IP")
+		Minio_Upload_Port: int = Field(default=9000, env="MINIO_UPLOAD_PORT")
+		Minio_Upload_Url: str = Field(default="http://120.133.137.142:9000", env="MINIO_UPLOAD_URL")
+		Minio_Access_Key: str = Field(default="IoeOmDzCZOkM0CiF6IK3", env="MINIO_ACCESS_KEY")
+		Minio_Secret_Key: str = Field(default="c5gKEUpeU1oirwTOmkbLtXKl0fiDCrtlkmEU0fIt", env="MINIO_SECRET_KEY")
+		Minio_Bucket_Name: str = Field(default="files", env="MINIO_BUCKET_NAME")
+	minio_settings = MinioSettings()
+else:
+	# 回退：未安装 pydantic-settings 时直接从环境变量读取
+	class _EnvMinioSettings:
+		Minio_IP = os.environ.get("MINIO_IP", "120.133.137.142")
+		Minio_Upload_Port = int(os.environ.get("MINIO_UPLOAD_PORT", "9000"))
+		Minio_Upload_Url = os.environ.get("MINIO_UPLOAD_URL", "http://120.133.137.142:9000")
+		Minio_Access_Key = os.environ.get("MINIO_ACCESS_KEY", "IoeOmDzCZOkM0CiF6IK3")
+		Minio_Secret_Key = os.environ.get("MINIO_SECRET_KEY", "c5gKEUpeU1oirwTOmkbLtXKl0fiDCrtlkmEU0fIt")
+		Minio_Bucket_Name = os.environ.get("MINIO_BUCKET_NAME", "files")
+	minio_settings = _EnvMinioSettings()
+minio_handler = minio_process(access_key=minio_settings.Minio_Access_Key, secret_key=minio_settings.Minio_Secret_Key,
+                              minio_server=f"{minio_settings.Minio_IP}:{minio_settings.Minio_Upload_Port}", bucket_name=minio_settings.Minio_Bucket_Name)
+
 
 # 为多进程确保兼容性
 mp.set_start_method('spawn', force=True)
@@ -53,13 +86,15 @@ IMAGE_DOWNLOAD_URL_PREFIX = os.environ.get("IMAGE_DOWNLOAD_URL_PREFIX", None)
 os.makedirs(IMAGE_OUTPUT_DIR, exist_ok=True)
 
 # 文本重写工具（可选）
+ENABLE_PROMPT_REWRITE = os.environ.get("ENABLE_PROMPT_REWRITE", "true").lower() == "true"
+
 try:
 	from examples.tools.prompt_utils import rewrite
 except Exception:
 	def rewrite(x: str) -> str:
 		return x
 
-print(f"Config: Model '{model_repo_id}', Using GPU NUMS {torch.cuda.device_count()}, Using {NUM_GPUS_TO_USE} GPUs, queue size {TASK_QUEUE_SIZE}, timeout {TASK_TIMEOUT} seconds")
+print(f"Config: Model '{model_repo_id}', Using GPU NUMS {torch.cuda.device_count()}, Using {NUM_GPUS_TO_USE} GPUs, queue size {TASK_QUEUE_SIZE}, timeout {TASK_TIMEOUT} seconds, prompt rewrite: {ENABLE_PROMPT_REWRITE}")
 
 # ----------------------------------
 # 多 GPU Worker 与管理器（参考 demo.py，移除 Gradio 依赖）
@@ -431,7 +466,7 @@ async def create_image(req: ImageGenerationRequest, request: Request):
 
 	width, height = get_image_size(req.aspect_ratio, req.size)
 	original_prompt = req.prompt
-	prompt = rewrite(req.prompt)
+	prompt = rewrite(req.prompt) if ENABLE_PROMPT_REWRITE else req.prompt
 
 	images: List[Image.Image] = []
 	errors: List[str] = []
@@ -467,7 +502,20 @@ async def create_image(req: ImageGenerationRequest, request: Request):
 		urls: List[ImageData] = []
 		for img in images:
 			filename = save_image(img, IMAGE_OUTPUT_DIR)
-			urls.append(ImageData(url=f"{IMAGE_DOWNLOAD_URL_PREFIX}/{filename}"))
+			local_path = os.path.join(IMAGE_OUTPUT_DIR, filename)
+			try:
+				upload_result = minio_handler.upload_file(file_path=local_path)
+				if upload_result.get("error"):
+					errors.append(f"upload failed: {upload_result.get('error_str')}")
+					continue
+				minio_key = upload_result.get("minio_put_path")
+				download_url = minio_handler.generate_download_url(minio_key)
+				urls.append(ImageData(url=download_url))
+			except Exception as e:
+				errors.append(f"upload exception: {e}")
+				continue
+		if not urls:
+			raise HTTPException(status_code=500, detail=f"Upload failed: {'; '.join(errors)}")
 		return ImageGenerationResponse(created=int(time.time()), data=urls)
 	else:
 		data_items = [ImageData(b64_json=pil_to_b64(img)) for img in images]

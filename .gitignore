@@ -17,3 +17,6 @@ __pycache__/
 *.env
 .env.*
 !.env.example
+Qwen-Image-2512/src/diffusers
+Qwen-Image-2512/src/
+images_tmp/

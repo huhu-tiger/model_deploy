@@ -1,5 +1,5 @@
 --index-url https://pypi.org/simple
---extra-index-url https://download.pytorch.org/whl/cu130
+--extra-index-url https://download.pytorch.org/whl/cu128
 
 
 
@@ -7,9 +7,15 @@
 -e git+https://github.com/huggingface/diffusers#egg=diffusers
 # 添加 modelscope 依赖
 modelscope==1.33.0
+minio==7.2.20
+numpy==2.4.0
 torch
 torchvision
 transformers==4.57.3
 fastapi==0.116.1
 uvicorn==0.35.0
 openai==1.100.1
+pydantic==2.12.5
+pydantic-settings==2.12.0
+pydantic_core==2.41.5
+python-dotenv==1.2.1
