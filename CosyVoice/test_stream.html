@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>流式TTS测试</title>
+    <script>
+        async function testStreamTTS() {
+            const response = await fetch('http://localhost:5788/tts_clone/stream', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    input: document.getElementById('text').value,
+                    voice: document.getElementById('voice').value
+                })
+            });
+            
+            // 创建音频元素并播放
+            const audioBlob = await response.blob();
+            const audioUrl = URL.createObjectURL(audioBlob);
+            const audio = document.getElementById('audioPlayer');
+            audio.src = audioUrl;
+            audio.play();
+        }
+    </script>
+</head>
+<body>
+    <h1>流式TTS测试</h1>
+    <div>
+        <label for="text">输入文本:</label>
+        <input type="text" id="text" value="这是一个测试文本，用于测试流式语音合成接口" style="width: 400px;">
+    </div>
+    <div>
+        <label for="voice">语音:</label>
+        <input type="text" id="voice" value="alex">
+    </div>
+    <button onclick="testStreamTTS()">测试流式TTS</button>
+    <div>
+        <audio id="audioPlayer" controls></audio>
+    </div>
+</body>
+</html>
