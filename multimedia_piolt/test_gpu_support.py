@@ -11,6 +11,36 @@ from pathlib import Path
 # 确保项目根目录在路径中
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# 加载 .env 文件
+ENV_PATH = Path(__file__).resolve().parent / ".env"
+if ENV_PATH.exists():
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(ENV_PATH)
+        print(f"✅ 已加载环境配置文件: {ENV_PATH}")
+    except ImportError:
+        # 手动解析 .env 文件
+        print(f"⚠️  python-dotenv 未安装，手动解析 .env 文件")
+        with open(ENV_PATH) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    # 处理变量引用 ${VAR}
+                    while '${' in value:
+                        start = value.find('${')
+                        end = value.find('}', start)
+                        if end > start:
+                            var_name = value[start+2:end]
+                            var_value = os.getenv(var_name, '')
+                            value = value[:start] + var_value + value[end+1:]
+                        else:
+                            break
+                    os.environ[key] = value
+        print(f"✅ 已手动加载环境配置文件: {ENV_PATH}")
+else:
+    print(f"⚠️  环境配置文件不存在: {ENV_PATH}")
+
 from moviepy.editor import ColorClip
 from utils.video_processor import process_video_task, _load_ffmpeg_config, _validate_nvenc
 
@@ -40,7 +70,7 @@ def check_nvidia_gpu():
 def check_ffmpeg_nvenc(ffmpeg_bin: str = None):
     """检查ffmpeg是否支持NVENC编码器"""
     if ffmpeg_bin is None:
-        ffmpeg_bin = os.getenv("FFMPEG_BIN", "/usr/bin/ffmpeg")
+        ffmpeg_bin = os.getenv("FFMPEG_BIN", "/root/anaconda3/envs/multimedia_piolt/bin/ffmpeg")
     
     try:
         result = subprocess.run(
@@ -65,6 +95,13 @@ def check_ffmpeg_nvenc(ffmpeg_bin: str = None):
 def create_test_video(path: Path, duration: int = 3):
     """创建测试用的视频文件"""
     print(f"创建测试视频: {path}")
+    
+    # 配置 moviepy 使用正确的 ffmpeg 路径
+    ffmpeg_bin = os.getenv("FFMPEG_BIN")
+    if ffmpeg_bin:
+        os.environ["FFMPEG_BINARY"] = ffmpeg_bin
+        os.environ["IMAGEMAGICK_BINARY"] = "convert"  # 使用系统的 convert
+    
     clip = ColorClip(size=(640, 360), color=(50, 120, 200), duration=duration)
     clip = clip.set_fps(24)
     clip.write_videofile(str(path), codec="libx264", audio=False, verbose=False, logger=None)
@@ -230,7 +267,7 @@ def main():
     
     # 2. 检查ffmpeg NVENC支持
     print("\n2. 检查ffmpeg NVENC支持...")
-    ffmpeg_bin = os.getenv("FFMPEG_BIN", "/usr/bin/ffmpeg")
+    ffmpeg_bin = os.getenv("FFMPEG_BIN", "/root/anaconda3/envs/multimedia_piolt/bin/ffmpeg")
     has_nvenc = check_ffmpeg_nvenc(ffmpeg_bin)
     
     # 3. 显示当前环境变量配置

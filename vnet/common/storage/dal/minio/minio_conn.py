@@ -72,11 +72,20 @@ class minio_process():
         urllib3.disable_warnings()
         
         # 初始化 Minio 客户端
+        # 根据端口判断是否使用 HTTPS
+        use_https = ':443' in minio_server or minio_server.startswith('https://')
+        # 移除协议前缀(如果有)
+        clean_server = minio_server.replace('https://', '').replace('http://', '')
+        
         self.minio_client = Minio(
-            endpoint=minio_server, 
+            endpoint=clean_server, 
             access_key=access_key, 
             secret_key=secret_key, 
-            secure=False
+            secure=use_https,  # 根据端口自动判断
+            http_client=urllib3.PoolManager(
+                cert_reqs='CERT_NONE',  # 禁用 SSL 证书验证
+                assert_hostname=False
+            ) if use_https else None
         )
 
         self.bucket_name = bucket_name
@@ -91,21 +100,15 @@ class minio_process():
         return f"{formatted_today}/{timestamp}/{object_name}"
 
     def generate_download_url(self,file_name):
-        # 基础URL
-        base_url = f"http://{self.minio_server}"
+        # 根据是否使用 secure 决定协议
+        protocol = "https" if self.minio_client._base_url.is_https else "http"
+        base_url = f"{protocol}://{self.minio_server}"
 
         # 具体路径
         path = f"{self.bucket_name}/{file_name}"
 
-        # 查询参数
-        # params = {
-        #     "key1": "value1",
-        #     "key2": "value2"
-        # }
-
         # 拼接URL
         full_url = urljoin(base_url, path)
-        # full_url = f"{url}?{urlencode(params)}"
 
         return full_url
 

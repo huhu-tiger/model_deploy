@@ -12,12 +12,13 @@ import aiofiles
 DOWNLOAD_TIMEOUT = int(os.getenv("DOWNLOAD_TIMEOUT", "300"))  # 默认 300 秒 (5分钟)
 DOWNLOAD_HEAD_TIMEOUT = int(os.getenv("DOWNLOAD_HEAD_TIMEOUT", "10"))  # 默认 10 秒
 
-def download_file_via_http(url, proxy=None):
+def download_file_via_http(url, proxy=None, verify_ssl=True):
     """
     下载 HTTP 文件到临时目录，并返回临时文件路径。
 
     :param url: HTTP 文件的下载地址。
     :param proxy: 可选，HTTP 代理地址。
+    :param verify_ssl: 是否验证 SSL 证书，默认 True。对于自签名证书可设置为 False。
     :return: 下载的临时文件路径。
     """
 
@@ -33,8 +34,13 @@ def download_file_via_http(url, proxy=None):
         # 记录开始时间
         start_time = time.time()
 
+        # 如果禁用 SSL 验证，抑制警告
+        if not verify_ssl:
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
         # 下载文件
-        with requests.get(url, stream=True, proxies=proxy, timeout=DOWNLOAD_TIMEOUT) as response:
+        with requests.get(url, stream=True, proxies=proxy, timeout=DOWNLOAD_TIMEOUT, verify=verify_ssl) as response:
             response.raise_for_status()
             with open(temp_file_path, "wb") as temp_file:
                 for chunk in response.iter_content(chunk_size=1024 * 1024):

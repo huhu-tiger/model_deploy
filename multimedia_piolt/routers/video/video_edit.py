@@ -49,7 +49,7 @@ async def process_video_url_endpoint(request: VideoProcessUrlRequest):
 
         try:
             logger.info("Downloading video...")
-            video_downloaded = download_file_via_http(request.video_url)
+            video_downloaded = download_file_via_http(request.video_url, verify_ssl=False)
             shutil.move(video_downloaded, video_target_path)
             video_temp_path = video_target_path
             logger.info("Video downloaded successfully.")
@@ -59,7 +59,7 @@ async def process_video_url_endpoint(request: VideoProcessUrlRequest):
 
         try:
             logger.info("Downloading audio...")
-            audio_downloaded = download_file_via_http(request.audio_url)
+            audio_downloaded = download_file_via_http(request.audio_url, verify_ssl=False)
             shutil.move(audio_downloaded, audio_target_path)
             audio_temp_path = audio_target_path
             logger.info("Audio downloaded successfully.")

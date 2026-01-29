@@ -31,7 +31,10 @@ ffmpeg -encoders | grep nvenc
 ## 2. Python 环境
 推荐使用 Conda：
 ```bash
-conda create -n multimedia_piolt python=3.12 -y
+# 注意：如果使用清华镜像源遇到 Python 3.12 不可用的问题，
+# 可以临时恢复官方源或使用 Python 3.10/3.11
+conda config --remove-key default_channels  # 恢复官方源（如果需要）
+conda create -n multimedia_piolt python=3.10 -y  # 推荐使用 3.10，兼容性好
 conda activate multimedia_piolt
 ```
 
