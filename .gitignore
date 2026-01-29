@@ -11,6 +11,8 @@ __pycache__/
 .gradio/
 */images_tmp
 */images_tmp/*
+*.whl
+*.egg
 
 # Environment files
 .env
@@ -23,5 +25,14 @@ images_tmp/
 *.wav
 _pycache_/
 .github
+logs
+*.pdf
 CosyVoice/pretrained_models
 CosyVoice3/pretrained_models
+multimedia_piolt/data/video/output/*
+multimedia_piolt/data/video/temp/*
+multimedia_piolt/data/video/download/*
+multimedia_piolt/data/video/input/*
+multimedia_piolt/data/video/input/*
+multimedia_piolt/resources/video/*.mp4
+multimedia_piolt/resources/ttf/*.ttf

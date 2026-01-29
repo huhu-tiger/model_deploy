@@ -139,10 +139,12 @@ class minio_process():
                                                     file_path)
             if valid:
                 etag = wresult.etag
-                cmd5 = calculate_md5(file_path)
-                if etag != cmd5:
-                    err_str = f"ETag: {etag}, neq {file_path} hash {cmd5}"
-                    err = True
+                # Multipart uploads (indicated by '-') have special ETags that don't match simple file MD5
+                if '-' not in etag:
+                    cmd5 = calculate_md5(file_path)
+                    if etag != cmd5:
+                        err_str = f"ETag: {etag}, neq {file_path} hash {cmd5}"
+                        err = True
             logger.info(f"File {file_path} [Minio]uploaded successfully as {object_name} to bucket {self.bucket_name}")
 
         except S3Error as e:
