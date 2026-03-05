@@ -160,16 +160,19 @@ Based on the user’s input, automatically determine the appropriate task catego
     original_prompt = original_prompt.strip()
     prompt = f"{SYSTEM_PROMPT}\n\nUser Input: {original_prompt}\n\n Rewritten Prompt:"
     magic_prompt = "Ultra HD, 4K, cinematic composition"
-    success=False
-    while not success:
+    max_retries = 3
+    for attempt in range(max_retries):
         try:
             polished_prompt = api(prompt, model='qwen-plus')
             polished_prompt = polished_prompt.strip()
             polished_prompt = polished_prompt.replace("\n", " ")
-            success = True
+            return polished_prompt
         except Exception as e:
-            print(f"Error during API call: {e}")
-    return polished_prompt 
+            print(f"Error during API call (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt == max_retries - 1:
+                print(f"Failed to rewrite prompt after {max_retries} attempts, using original prompt")
+                return original_prompt
+    return original_prompt 
 
 def polish_prompt_zh(original_prompt):
     SYSTEM_PROMPT = '''
@@ -254,16 +257,19 @@ def polish_prompt_zh(original_prompt):
     original_prompt = original_prompt.strip()
     prompt = f'''{SYSTEM_PROMPT}\n\n用户输入：{original_prompt}\n改写输出：'''
     magic_prompt = "超清，4K，电影级构图"
-    success=False
-    while not success:
+    max_retries = 3
+    for attempt in range(max_retries):
         try:
             polished_prompt = api(prompt, model='qwen-plus')
             polished_prompt = polished_prompt.strip()
             polished_prompt = polished_prompt.replace("\n", " ")
-            success = True
+            return polished_prompt
         except Exception as e:
-            print(f"Error during API call: {e}")
-    return polished_prompt 
+            print(f"Error during API call (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt == max_retries - 1:
+                print(f"Failed to rewrite prompt after {max_retries} attempts, using original prompt")
+                return original_prompt
+    return original_prompt 
 
 
 def rewrite(input_prompt):

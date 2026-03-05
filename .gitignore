@@ -13,7 +13,7 @@ __pycache__/
 */images_tmp/*
 *.whl
 *.egg
-
+.vscode
 # Environment files
 .env
 *.env

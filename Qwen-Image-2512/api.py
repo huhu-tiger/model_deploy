@@ -5,7 +5,7 @@ import time
 import random
 import uuid
 import sys
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 from pathlib import Path
@@ -41,7 +41,7 @@ from fastapi.staticfiles import StaticFiles
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vnet.common.config.env import load_env
 load_env(dotenv_path=os.path.join(BASE_DIR, ".env"), override=False) # 加载当前目录下的 .env 文件,要在minio_conn前面加载
-from vnet.common.storage.dal.minio.minio_conn import minio_handler
+from vnet.common.storage.dal.minio.minio_userpass import MinioApiUploader, MinioSettings
 
 
 # ----------------------------------
@@ -57,80 +57,95 @@ IMAGE_DOWNLOAD_URL_PREFIX = os.environ.get("IMAGE_DOWNLOAD_URL_PREFIX", None)
 MINIO_UPLOAD_DIR = os.environ.get("MINIO_UPLOAD_DIR", "qwen3-image-2512")
 os.makedirs(IMAGE_OUTPUT_DIR, exist_ok=True)
 
+# 初始化 MinIO 上传器
+minio_settings = MinioSettings()
+minio_handler = MinioApiUploader(
+	endpoint=f"{minio_settings.Minio_IP}:{minio_settings.Minio_Upload_Port}",
+	username=minio_settings.Minio_Root_User,
+	password=minio_settings.Minio_Root_Password,
+	bucket_name=minio_settings.Minio_Bucket_Name,
+	download_base_url=minio_settings.Minio_Upload_Url,
+	api_path=minio_settings.Minio_Api_Path,
+)
+
 
 # ----------------------------------
-# OpenAI 兼容的请求/响应模型（按 tech.md）
+# 阿里云百炼兼容的请求/响应模型
 # ----------------------------------
 
 
-class MessageContent(BaseModel):
-	text: str
+class ContentItem(BaseModel):
+	text: Optional[str] = None
+	image_url: Optional[str] = None
 
 
 class Message(BaseModel):
 	role: str
-	content: List[MessageContent]
+	content: List[ContentItem]
 
 
 class InputPayload(BaseModel):
-	messages: List[Message]
+	prompt: Optional[str] = Field(default=None, max_length=800, description="文本描述，最多800字符")
+	messages: Optional[List[Message]] = Field(default=None, description="消息列表（支持阿里云格式）")
+	negative_prompt: Optional[str] = Field(default="", max_length=500, description="反向提示词，最多500字符")
+	ref_image: Optional[str] = Field(default=None, description="参考图片URL（暂不支持）")
 
 
 class Parameters(BaseModel):
-	negative_prompt: Optional[str] = ""
-	prompt_extend: bool = True
-	watermark: Optional[bool] = False
-	size: Optional[str] = "1024x1024"
-	response_format: Optional[str] = "b64_json"
-	num_inference_steps: int = Field(default=50, ge=1, le=50)
-	guidance_scale: float = 4.0
-	seed: Optional[int] = None
-	n: int = Field(default=1, ge=1, le=4)
-	width: Optional[int] = None
-	height: Optional[int] = None
-	aspect_ratio: Optional[str] = None
+	style: Optional[str] = Field(default="<auto>", description="图像风格（暂不支持）")
+	size: Optional[str] = Field(default="1024*1024", description="图像尺寸，格式：宽*高")
+	n: int = Field(default=1, ge=1, le=4, description="生成图片数量，1-4")
+	seed: Optional[int] = Field(default=None, ge=0, le=2147483647, description="随机种子")
+	ref_strength: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="参考图强度（暂不支持）")
+	ref_mode: Optional[str] = Field(default="repaint", description="参考模式（暂不支持）")
+	negative_prompt: Optional[str] = Field(default="", max_length=500, description="反向提示词，最多500字符")
+	watermark: Optional[bool] = Field(default=False, description="是否添加水印")
+	# 内部参数（非阿里云标准，用于兼容现有实现）
+	prompt_extend: Optional[bool] = Field(default=True, description="是否扩展提示词（内部参数）")
+	num_inference_steps: Optional[int] = Field(default=50, ge=1, le=50, description="推理步数（内部参数）")
+	guidance_scale: Optional[float] = Field(default=4.0, description="引导系数（内部参数）")
+	response_format: Optional[str] = Field(default="url", description="返回格式：url 或 b64_json（内部参数）")
 
 
 class ImageGenerationRequest(BaseModel):
 	model: str
 	input: InputPayload
-	parameters: Parameters
+	parameters: Optional[Parameters] = Field(default_factory=Parameters)
 
 
 class ImageContent(BaseModel):
 	image: Optional[str] = None
-	b64_json: Optional[str] = None
 
 
-class ChoiceMessage(BaseModel):
-	role: str
+class MessageContent(BaseModel):
 	content: List[ImageContent]
+	role: str = "assistant"
 
 
 class Choice(BaseModel):
-	finish_reason: str
-	message: ChoiceMessage
+	finish_reason: str = "stop"
+	message: MessageContent
 
 
 class TaskMetric(BaseModel):
-	FAILED: int
-	SUCCEEDED: int
 	TOTAL: int
+	SUCCEEDED: int
+	FAILED: int
 
 
-class Usage(BaseModel):
-	height: int
-	image_count: int
-	width: int
-
-
-class Output(BaseModel):
+class OutputPayload(BaseModel):
 	choices: List[Choice]
 	task_metric: TaskMetric
 
 
+class Usage(BaseModel):
+	image_count: int
+	width: int
+	height: int
+
+
 class ImageGenerationResponse(BaseModel):
-	output: Output
+	output: OutputPayload
 	usage: Usage
 	request_id: str
 
@@ -139,22 +154,14 @@ class ImageGenerationResponse(BaseModel):
 # 实用函数
 # ----------------------------------
 
-def get_image_size(aspect_ratio: Optional[str], size: Optional[str]) -> (int, int):
-	if aspect_ratio:
-		if aspect_ratio == "1:1":
-			return 1328, 1328
-		elif aspect_ratio == "16:9":
-			return 1664, 928
-		elif aspect_ratio == "9:16":
-			return 928, 1664
-		elif aspect_ratio == "4:3":
-			return 1472, 1140
-		elif aspect_ratio == "3:4":
-			return 1140, 1472
-	# 解析 size，支持 1024x1024 或 1328*1328
+def get_image_size(size: Optional[str]) -> Tuple[int, int]:
+	"""解析阿里云格式的尺寸字符串，如 1024*1024"""
+	if not size:
+		return 1024, 1024
 	try:
-		sz = size.lower().replace("*", "x")
-		w, h = sz.split("x")
+		# 支持 1024*1024 或 1024x1024 格式
+		sz = size.replace("x", "*")
+		w, h = sz.split("*")
 		return int(w), int(h)
 	except Exception:
 		return 1024, 1024
@@ -183,7 +190,28 @@ app = FastAPI(title="Qwen-Image OpenAI-Compatible API", version="1.0.0")
 os.makedirs(IMAGE_OUTPUT_DIR, exist_ok=True)
 app.mount("/images", StaticFiles(directory=IMAGE_OUTPUT_DIR), name="images")
 
-# 在应用启动时初始化一次（放在 app 定义之后，避免未定义引用）
+
+@app.on_event("startup")
+async def startup_event():
+	"""应用启动时预加载模型和登录 MinIO"""
+	# 登录 MinIO
+	print("正在登录 MinIO...")
+	if minio_handler.login():
+		print("MinIO 登录成功")
+	else:
+		print("MinIO 登录失败，请检查配置")
+
+	# 加载模型
+	print(f"正在加载模型: {model_repo_id}")
+	try:
+		# 调用一次 generate_image 触发模型加载
+		from generate import _get_pipe
+		_get_pipe(model_repo_id)
+		print(f"模型加载完成: {model_repo_id}")
+	except Exception as e:
+		print(f"模型加载失败: {e}")
+		import traceback
+		traceback.print_exc()
 
 
 @app.get("/healthz")
@@ -201,27 +229,65 @@ async def list_models():
 	}
 
 
-@app.post("/v1/images/generations", response_model=ImageGenerationResponse)
+@app.post("/api/v1/services/aigc/text2image/image-synthesis", response_model=ImageGenerationResponse)
 async def create_image(req: ImageGenerationRequest, request: Request):
+	"""
+	阿里云百炼兼容的文生图接口
+
+	支持的参数：
+	- model: 模型名称
+	- input.prompt: 文本描述（必填）
+	- input.negative_prompt: 反向提示词
+	- parameters.size: 图像尺寸（格式：宽*高）
+	- parameters.n: 生成数量（1-4）
+	- parameters.seed: 随机种子
+	- parameters.response_format: 返回格式（url/b64_json，内部参数）
+
+	暂不支持的参数：
+	- input.ref_image: 参考图片（需要图像编辑模型支持）
+	- parameters.style: 图像风格（当前模型不支持风格控制）
+	- parameters.ref_strength: 参考图强度（需要参考图支持）
+	- parameters.ref_mode: 参考模式（需要参考图支持）
+	"""
 	# 校验模型
 	accepted_models = {m.lower() for m in [MODEL_NAME, os.environ.get("OPENAI_MODEL", "") if os.environ.get("OPENAI_MODEL") else None] if m}
 	if req.model.lower() not in accepted_models:
-		raise HTTPException(status_code=400, detail=f"Model not available: {MODEL_NAME}")
+		raise HTTPException(status_code=400, detail=f"Model not available: {req.model}")
 
-	params = req.parameters
-	messages = req.input.messages if req.input and req.input.messages else []
-	if not messages or not messages[0].content:
-		raise HTTPException(status_code=400, detail="Invalid request: missing input.messages.content.text")
-	original_prompt = messages[0].content[0].text
+	# 检查不支持的参数
+	if req.input.ref_image:
+		raise HTTPException(status_code=400, detail="参数 ref_image 暂不支持，需要图像编辑模型")
+
+	params = req.parameters or Parameters()
+
+	# 获取提示词 - 支持两种格式
+	original_prompt = None
+	if req.input.prompt:
+		original_prompt = req.input.prompt
+	elif req.input.messages:
+		# 从 messages 中提取 text
+		for msg in req.input.messages:
+			if msg.role == "user" and msg.content:
+				for item in msg.content:
+					if item.text:
+						original_prompt = item.text
+						break
+				if original_prompt:
+					break
+
+	if not original_prompt:
+		raise HTTPException(status_code=400, detail="Invalid request: missing input.prompt or input.messages with text content")
+
+	# 获取 negative_prompt - 优先从 input 获取，其次从 parameters 获取
+	negative_prompt = req.input.negative_prompt or params.negative_prompt or ""
+
 	use_rewrite = params.prompt_extend if params.prompt_extend is not None else True
 	prompt = rewrite(original_prompt) if use_rewrite else original_prompt
 
-	# 分辨率解析：width/height 优先，其次 size/aspect_ratio
-	if params.width and params.height:
-		width, height = params.width, params.height
-	else:
-		width, height = get_image_size(params.aspect_ratio, params.size)
+	# 解析尺寸
+	width, height = get_image_size(params.size)
 
+	# 生成图像
 	images: List[Image.Image] = []
 	errors: List[str] = []
 
@@ -233,7 +299,7 @@ async def create_image(req: ImageGenerationRequest, request: Request):
 			img = generate_image(
 				model_repo_id,
 				prompt,
-				params.negative_prompt or "",
+				negative_prompt,
 				width,
 				height,
 				params.num_inference_steps,
@@ -247,35 +313,67 @@ async def create_image(req: ImageGenerationRequest, request: Request):
 	if not images:
 		raise HTTPException(status_code=500, detail=f"Inference failed: {'; '.join(errors)}")
 
-	response_format = (params.response_format or "b64_json").lower()
-	contents: List[ImageContent] = []
+	# 处理返回格式
+	response_format = (params.response_format or "url").lower()
+	choices: List[Choice] = []
+
 	if response_format == "url":
-			for img in images:
-				filename = save_image(img, IMAGE_OUTPUT_DIR)
-				local_path = os.path.join(IMAGE_OUTPUT_DIR, filename)
-				upload = minio_handler.upload_file(local_path, upload_dir=MINIO_UPLOAD_DIR)
-				if upload.get("error"):
-					errors.append(upload.get("error_str", "upload failed"))
-					continue
-				download_url = minio_handler.generate_download_url(upload.get("minio_put_path"))
-				contents.append(ImageContent(image=download_url))
-				try:
-					os.remove(local_path)
-				except Exception:
-					pass
-	else:
 		for img in images:
-			contents.append(ImageContent(b64_json=pil_to_b64(img)))
+			filename = save_image(img, IMAGE_OUTPUT_DIR)
+			local_path = os.path.join(IMAGE_OUTPUT_DIR, filename)
+			upload = minio_handler.upload_file(local_path, upload_dir=MINIO_UPLOAD_DIR)
+			if upload.get("error"):
+				errors.append(upload.get("error_str", "upload failed"))
+				continue
+			# MinioApiUploader 直接返回 download_url
+			download_url = upload.get("download_url")
 
-	choices = [Choice(
-		finish_reason="stop",
-		message=ChoiceMessage(role="assistant", content=contents),
-	)]
+			# 构造 choice
+			choice = Choice(
+				finish_reason="stop",
+				message=MessageContent(
+					content=[ImageContent(image=download_url)],
+					role="assistant"
+				)
+			)
+			choices.append(choice)
 
-	task_metric = TaskMetric(FAILED=len(errors), SUCCEEDED=len(images), TOTAL=params.n)
-	usage = Usage(height=height, width=width, image_count=len(images))
+			try:
+				os.remove(local_path)
+			except Exception:
+				pass
+	else:
+		# b64_json 格式暂不支持新格式，保持原有逻辑
+		for img in images:
+			choice = Choice(
+				finish_reason="stop",
+				message=MessageContent(
+					content=[ImageContent(image=f"data:image/png;base64,{pil_to_b64(img)}")],
+					role="assistant"
+				)
+			)
+			choices.append(choice)
+
+	# 构造阿里云格式的响应
+	task_metric = TaskMetric(
+		TOTAL=params.n,
+		SUCCEEDED=len(images),
+		FAILED=len(errors)
+	)
+
+	output = OutputPayload(
+		choices=choices,
+		task_metric=task_metric
+	)
+
+	usage = Usage(
+		image_count=len(images),
+		width=width,
+		height=height
+	)
+
 	resp = ImageGenerationResponse(
-		output=Output(choices=choices, task_metric=task_metric),
+		output=output,
 		usage=usage,
 		request_id=uuid.uuid4().hex,
 	)
