@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  vllm_qwen_image_edit:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/vllm/vllm-omni:v0.14.0
+    runtime: nvidia
+    # environment:
+    #   - HF_HOME=/root/.cache/huggingface
+    volumes:
+      - /media/llm:/media/llm
+    ipc: host
+    ports:
+      - "9121:8000"
+    command:
+      [
+        "vllm", "serve", "/media/llm/Qwen/Qwen-Image-Edit-2511",
+        "--omni",
+        "--host", "0.0.0.0",
+        "--port", "8000",
+        "--served-model-name", "Qwen-Image-Edit-2511",
+        "--trust-remote-code"
+      ]
+    restart: always
+    deploy:
+        resources:
+          reservations:
+            devices:
+              - driver: nvidia
+                capabilities: [gpu]
+                device_ids: [ "4" ]

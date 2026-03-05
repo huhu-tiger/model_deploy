@@ -26,6 +26,9 @@ images_tmp/
 _pycache_/
 .github
 logs
+*.png
+*.jpeg
+*.jpg
 *.pdf
 CosyVoice/pretrained_models
 CosyVoice3/pretrained_models
