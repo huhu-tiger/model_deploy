@@ -1,0 +1,30 @@
+version: '3.8'  # 使用 3.8 以支持 GPU 资源
+services:
+  embedding:
+    image: model.vnet.com/sjhl/jokerwho/bge-large-api:latest
+    container_name: bge-api
+    ports:
+      - 6009:6008
+    networks:
+      - embedding_network
+    restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all  # 允许使用所有 GPU
+              capabilities: [gpu]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "all"  # 使所有 GPU 对容器可见
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"  # 允许计算功能
+
+networks:
+  embedding_network:
+    driver: bridge
+

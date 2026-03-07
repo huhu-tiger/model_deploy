@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  qwen3-embedding-8b:
+    image: model.vnet.com/sjhl/vllm-openai:v0.9.1
+    container_name: qwen3-embedding-8b
+    runtime: nvidia
+    environment:
+      CUDA_VISIBLE_DEVICES: "0"
+    volumes:
+      - /opt/llm/:/opt/llm/
+    ports:
+      - "8013:1234"
+    ipc: host
+    command: >
+      --served-model-name "Qwen3-Embedding-8B"
+      --model "/opt/llm/Qwen/Qwen3-Embedding-8B"
+      --port 1234
+      --task embed
+      --trust-remote-code
+      --hf_overrides '{"matryoshka_dimensions":[4096]}'
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+networks:
+  default:
+    driver: bridge

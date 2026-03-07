@@ -1,0 +1,26 @@
+version: '3'
+services:
+  m3e_api:
+    image: model.vnet.com/sjhl/m3e-api:latest
+    container_name: m3e-api
+    environment:
+      TZ: Asia/Shanghai
+      # sk-key: sk-123456
+      sk-key: "sk-aaabbbcccdddeeefffggghhhiiijjjkkk"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all  # 允许使用所有 GPU
+              capabilities: [ gpu ]
+    restart: always
+    networks:
+      - m3e-api
+    ports:
+      - "6008:6008"
+
+networks:
+  m3e-api:
+    driver: bridge
+

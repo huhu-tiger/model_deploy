@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  qwen3-embedding-0.6b:
+    # image: ghcr.io/huggingface/text-embeddings-inference:1.7.2
+    image: model.vnet.com/sjhl/text-embeddings-inference:cpu-1.9.2
+    container_name: qwen3-embedding-0.6b
+    pull_policy: always
+    ports:
+      - "6010:80"
+    volumes:
+      - /media/llm:/data
+      - /media/llm/Qwen/Qwen3-Embedding-0.6B:/Qwen3-Embedding-0.6B
+    command: >
+      --model-id /Qwen3-Embedding-0.6B
+      --port 80
+    restart: unless-stopped
+
+
+networks:
+  default:
+    driver: bridge
