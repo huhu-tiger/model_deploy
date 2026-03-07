@@ -1,0 +1,35 @@
+version: "3.9"
+services:
+  sg-deepseekv32:
+    image: lmsysorg/sglang:v0.5.6.post2
+    container_name: sg-deepseekv32
+    restart: always
+    entrypoint: ["/root/start.sh"]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "all"  # 使用所有 GPU
+      SGLANG_DG_CACHE_DIR: "/root/.cache/dg_cache"
+      NCCL_DEBUG: "warn"
+    volumes:
+      - ./start-flashinfer.sh:/root/start.sh
+      - /media/llm:/media/llm
+      - /etc/localtime:/etc/localtime
+      - /media/llm/dg_cache:/root/.cache/dg_cache
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    network_mode: host
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/model_info"]  # ⚠ 替换为你服务真正监听的端口
+      interval: 15s   # 每 30 秒检查一次
+      timeout: 5s     # 单次超时 5 秒
+      retries: 3      # 连续 5 次失败后标记为 unhealthy
+      start_period: 900s  # 启动后允许 900 秒的冷启动时间
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1', '2', '3', '4', '5', '6', '7']
+              capabilities: [gpu]

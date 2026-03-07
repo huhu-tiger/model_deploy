@@ -1,0 +1,46 @@
+version: "3.9"
+services:
+  qwen35-122b:
+    image: model.vnet.com/sjhl/sglang:v0.5.9
+    container_name: Qwen3.5-122B-A10B
+    restart: always
+    command: >
+      python3 -m sglang.launch_server
+      --model-path /media/llm/Qwen/Qwen3.5-122B-A10B
+      --port 30001
+      --enable-metrics
+      --host 0.0.0.0
+      --tp 4
+      --reasoning-parser qwen3
+      --tool-call-parser qwen3_coder
+      --speculative-algo NEXTN
+      --speculative-num-steps 3
+      --speculative-eagle-topk 1
+      --speculative-num-draft-tokens 4
+      --mem-fraction-static 0.85
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "0,1,2,3"  # 指定使用前 4 张 GPU
+      SGLANG_DG_CACHE_DIR: "/root/.cache/qwen3.5_122B_cache"
+    volumes:
+      - /media/llm:/media/llm
+      - /media/llm/qwen3.5_122B_cache:/root/.cache/qwen3.5_cache
+      - /etc/localtime:/etc/localtime
+    ports:
+      - "30001:30001"
+    ulimits:
+      memlock: -1
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 600s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1', '2', '3']
+              capabilities: [gpu]
