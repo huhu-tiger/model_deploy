@@ -1,0 +1,48 @@
+version: "3.9"
+
+services:
+  wan22-t2v-a14b:
+    image: model.vnet.com/sjhl/vllm-omni:v0.16.0
+    container_name: wan22-t2v-a14b
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=3,5
+    volumes:
+      - /media/llm:/media/llm
+      - ./cache:/root/.cache/huggingface
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ports:
+      - "9141:8091"
+    command:
+      - --model
+      - /media/llm/Wan-AI/Wan2.2-T2V-A14B-Diffusers
+      - --port
+      - "8091"
+      - --omni
+      - --host
+      - "0.0.0.0"
+      - --tensor-parallel-size
+      - "2"
+      - --served-model-name
+      - Wan2.2-T2V-A14B
+      - --gpu-memory-utilization
+      - "0.9"
+      - --trust-remote-code
+      - --enforce-eager
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["3", "5"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8091/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s

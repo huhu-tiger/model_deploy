@@ -1,0 +1,33 @@
+version: "3.9"
+
+services:
+  vllm_qwen3_tts:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/vllm/vllm-omni:v0.14.0
+    runtime: nvidia
+    # environment:
+    #   - HF_HOME=/root/.cache/huggingface
+    volumes:
+      - /media/llm:/media/llm
+    ipc: host
+    ports:
+      - "9131:8091"
+    command:
+      [
+        "vllm", "serve", "/media/llm/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
+        "--omni",
+        "--stage-configs-path", "vllm_omni/model_executor/stage_configs/qwen3_tts.yaml",
+        "--host", "0.0.0.0",
+        "--port", "8091",
+        "--served-model-name", "Qwen3-TTS-12Hz-1.7B-CustomVoice",
+        "--gpu-memory-utilization", "0.9",
+        "--trust-remote-code",
+        "--enforce-eager"
+      ]
+    restart: always
+    deploy:
+        resources:
+          reservations:
+            devices:
+              - driver: nvidia
+                capabilities: [gpu]
+                device_ids: [ "2" ]

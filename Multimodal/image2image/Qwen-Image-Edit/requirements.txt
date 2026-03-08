@@ -1,0 +1,13 @@
+git+https://github.com/huggingface/diffusers.git
+
+transformers
+accelerate
+safetensors
+sentencepiece
+dashscope
+torchvision
+openai
+fastapi
+uvicorn
+python-multipart
+pydantic
