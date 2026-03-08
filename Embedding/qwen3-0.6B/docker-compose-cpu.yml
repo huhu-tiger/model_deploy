@@ -1,5 +1,5 @@
 version: '3.8'
-
+# 启动需要20分钟
 services:
   qwen3-embedding-0.6b:
     # image: ghcr.io/huggingface/text-embeddings-inference:1.7.2
