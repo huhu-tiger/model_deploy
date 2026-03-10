@@ -15,11 +15,12 @@ services:
       [
         "vllm", "serve", "/media/llm/Qwen/Qwen-Image-2512",
         "--omni",
-        "--tensor-parallel-size", "1",
+        "--tensor-parallel-size", "4",  # 多卡并发数
         "--host", "0.0.0.0",
         "--port", "8000",
         "--served-model-name", "qwen-image",
-        "--trust-remote-code"
+        "--trust-remote-code",
+        "--enforce-eager"
       ]
     restart: always
     deploy:
@@ -28,4 +29,4 @@ services:
             devices:
               - driver: nvidia
                 capabilities: [gpu]
-                device_ids: [ "6" ]
+                device_ids: [ "2","3","4","5" ]
