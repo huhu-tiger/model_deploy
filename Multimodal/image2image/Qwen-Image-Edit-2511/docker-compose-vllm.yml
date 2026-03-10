@@ -2,29 +2,47 @@ version: "3.9"
 
 services:
   vllm_qwen_image_edit:
-    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/vllm/vllm-omni:v0.14.0
+    image: model.vnet.com/sjhl/vllm-omni:v0.16.0
+    container_name: vllm-qwen-image-edit-2511
     runtime: nvidia
-    # environment:
-    #   - HF_HOME=/root/.cache/huggingface
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0,1,2,3
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_DISABLE_REQUIRE=1   # 宿主机驱动 590.44 超出镜像声明的兼容白名单(<=570)，跳过约束检查
+      # 宿主机驱动 590.44，但容器 compat 层为 575.57，ldconfig 优先加载了 compat/libcuda.so.575
+      # 导致内核驱动(590) 与用户态库(575) 版本不匹配 → Error 803
+      # 修复：将真实宿主机驱动路径置于 LD_LIBRARY_PATH 最前，覆盖 compat 层
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64:/usr/local/cuda/lib64
+      # - HF_HOME=/root/.cache/huggingface
     volumes:
       - /media/llm:/media/llm
     ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
     ports:
-      - "9121:8000"
+      - "9121:8091"
     command:
-      [
-        "vllm", "serve", "/media/llm/Qwen/Qwen-Image-Edit-2511",
-        "--omni",
-        "--host", "0.0.0.0",
-        "--port", "8000",
-        "--served-model-name", "Qwen-Image-Edit-2511",
-        "--trust-remote-code"
-      ]
-    restart: always
+      - --model
+      - /media/llm/Qwen/Qwen-Image-Edit-2511
+      - --port
+      - "8091"
+      - --omni
+      - --host
+      - "0.0.0.0"
+      - --tensor-parallel-size
+      - "4"
+      - --served-model-name
+      - Qwen-Image-Edit-2511
+      - --gpu-memory-utilization
+      - "0.9"
+      - --trust-remote-code
+      - --enforce-eager
+    restart: unless-stopped
     deploy:
-        resources:
-          reservations:
-            devices:
-              - driver: nvidia
-                capabilities: [gpu]
-                device_ids: [ "4" ]
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["0","1","2","3"]
