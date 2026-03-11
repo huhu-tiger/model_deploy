@@ -4,6 +4,7 @@ services:
   vllm_qwen_image:
     image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/vllm/vllm-omni:v0.14.0
     runtime: nvidia
+    container_name: vllm-qwen-image-2512
     # environment:
     #   - HF_HOME=/root/.cache/huggingface
     volumes:
@@ -16,11 +17,16 @@ services:
         "vllm", "serve", "/media/llm/Qwen/Qwen-Image-2512",
         "--omni",
         "--tensor-parallel-size", "4",  # 多卡并发数
+        "--gpu-memory-utilization", "0.9",
+        "--max-num-seqs", "4",
+        "--max-num-batched-tokens", "4096",
         "--host", "0.0.0.0",
         "--port", "8000",
         "--served-model-name", "qwen-image",
         "--trust-remote-code",
-        "--enforce-eager"
+        "--compilation-config", "{\"mode\": 3, \"cudagraph_capture_sizes\": [1, 2, 4]}",
+        "--enable-request-id-headers",
+        "--enable-cache-dit-summary"
       ]
     restart: always
     deploy:
