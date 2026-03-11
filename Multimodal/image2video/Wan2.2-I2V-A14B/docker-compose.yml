@@ -1,0 +1,76 @@
+version: "3.9"
+
+services:
+  wan22-i2v-a14b:
+    # 基于官方镜像构建，额外安装 flash-attn（提升 attention 性能）
+    image: model.vnet.com/sjhl/vllm-omni:v0.16.0-flashattn
+    container_name: vllm-wan22-i2v-a14b
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0,1,2,3
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_DISABLE_REQUIRE=1   # 宿主机驱动 590.44 超出镜像声明的兼容白名单(<=570)，跳过约束检查
+      # 宿主机驱动 590.44，但容器 compat 层为 575.57，ldconfig 优先加载了 compat/libcuda.so.575
+      # 导致内核驱动(590) 与用户态库(575) 版本不匹配 → Error 803
+      # 修复：将真实宿主机驱动路径置于 LD_LIBRARY_PATH 最前，覆盖 compat 层
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64:/usr/local/cuda/lib64
+    volumes:
+      - /media/llm:/media/llm
+      - ./cache:/root/.cache/huggingface
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ports:
+      - "9141:8091"
+    command:
+      - --model
+      - /media/llm/Wan-AI/Wan2.2-I2V-A14B-Diffusers
+      - --port
+      - "8091"
+      - --omni
+      - --host
+      - "0.0.0.0"
+      - --tensor-parallel-size
+      - "4"
+      - --served-model-name
+      - Wan2.2-I2V-A14B
+      - --gpu-memory-utilization
+      - "0.9"
+      # 并发/调度（压测时优先调这两个）
+      # - 吞吐优先：把 max-num-seqs 调大（如 4/6/8），同时观察显存与排队延迟
+      # - 延迟优先：把 max-num-seqs 调小（如 1/2/3），避免拥塞导致尾延迟暴涨
+      - --max-num-seqs
+      - "4"
+      # 控制一次迭代的“批处理预算”（越大越偏吞吐，越小越偏延迟/稳定）
+      # 注意：该值与模型/分辨率/帧数强相关，如出现 OOM 或抖动就降低
+      - --max-num-batched-tokens
+      - "4096"
+      - --trust-remote-code
+      # 性能优化：启用 torch.compile + CUDAGraph（vllm serve 的 CompilationConfig）
+      # 说明：`--enforce-eager` 会禁用/削弱编译与图捕获，因此这里保持关闭
+      - --compilation-config
+      - '{"mode": 3, "cudagraph_capture_sizes": [1, 2, 4]}'
+      # - --enforce-eager
+      # 并发排障：给每个响应加 X-Request-Id，方便关联日志/链路追踪
+      - --enable-request-id-headers
+      - --boundary-ratio
+      - "0.875"
+      - --flow-shift
+      - "12.0"
+      # 性能优化参数（参考官方示例）
+      - --enable-cache-dit-summary  # 启用 Cache-DiT 优化，提升推理速度
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["4", "5","6","7"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8091/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
