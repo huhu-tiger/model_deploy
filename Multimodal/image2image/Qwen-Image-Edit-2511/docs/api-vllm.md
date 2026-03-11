@@ -91,7 +91,9 @@ result = client.images.edit(
     extra_body={
         "num_inference_steps": 50,
         "seed": 777,
-        "guidance_scale": 7.5
+        "guidance_scale": 7.5,
+        # Qwen 官方建议：negative_prompt 传入空白字符串（而不是省略字段）
+        "negative_prompt": " "
     }
 )
 
@@ -128,6 +130,8 @@ result = client.images.edit(
         "num_inference_steps": 50,
         "guidance_scale": 1,
         "seed": 777,
+        # Qwen 官方建议：negative_prompt 传入空白字符串（而不是省略字段）
+        "negative_prompt": " ",
     }
 )
 
@@ -149,6 +153,7 @@ curl --location --request POST 'http://39.155.179.4:9121/v1/images/edits' \
 --form 'output_format="jpeg"' \
 --form 'num_inference_steps="10"' \
 --form 'guidance_scale="7.5"' \
+--form 'negative_prompt=" "' \
 --form 'seed="777"' \
 --form 'n="1"'
 ```
@@ -169,7 +174,8 @@ curl -X POST http://localhost:8000/v1/images/edits \
     ],
     "num_inference_steps": 50,
     "guidance_scale": 1,
-    "seed": 777
+    "seed": 777,
+    "negative_prompt": " "
   }'
 ```
 
@@ -192,7 +198,8 @@ data = {
     "output_format": "jpeg",
     "num_inference_steps": 50,
     "seed": 777,
-    "guidance_scale": 7.5
+    "guidance_scale": 7.5,
+    "negative_prompt": " "
 }
 
 # 发送请求
@@ -225,7 +232,8 @@ payload = {
     ],
     "num_inference_steps": 50,
     "guidance_scale": 1,
-    "seed": 777
+    "seed": 777,
+    "negative_prompt": " "
 }
 
 # 发送请求
@@ -272,3 +280,63 @@ with open("edit_out_http.jpeg", "wb") as f:
 3. **引导强度**：guidance_scale 建议设置在 7.0-9.0 之间，过高可能导致过饱和
 4. **批量生成**：使用 `n` 参数可一次生成多张图像，但会增加处理时间
 5. **随机种子**：固定 seed 可确保相同输入产生相同输出，便于调试和复现
+
+## 速度优化（出图更快）
+
+下面这些参数对“单张出图耗时”的影响最大，按优先级从高到低：
+
+1. **num_inference_steps（最关键）**
+   - 速度档（推荐）：`8~15`
+   - 均衡档：`20~30`
+   - 质量档：`40+`（通常会明显变慢）
+
+2. **size（计算量随分辨率快速增长）**
+   - 速度档（推荐）：`512x512`
+   - 均衡档：`768x768`
+   - 质量档：`1024x1024`（明显更慢）
+
+3. **guidance_scale（过大可能更慢且收益不稳定）**
+   - 速度/稳定（推荐）：`3~7`
+   - 质量偏好：`7~9`
+
+4. **output_format（影响编码与网络传输）**
+   - 速度优先：`jpeg`（体积更小，传输更快）
+   - 质量/无损：`png`（更大更慢）
+
+5. **n（一次返回多张图）**
+   - 追求单张最快：保持 `n=1`
+   - 追求吞吐：可用 `n>1`，但单次请求耗时会增加
+
+### 推荐参数组合
+
+**极速预览（最快出图）**
+
+- `size="512x512"`
+- `num_inference_steps=10`
+- `guidance_scale=5`
+- `output_format="jpeg"`
+- `n=1`
+
+**质量/速度均衡（多数场景默认）**
+
+- `size="768x768"`
+- `num_inference_steps=20`
+- `guidance_scale=7`
+- `negative_prompt=" "`
+- `output_format="jpeg"`
+- `n=1`
+
+## 常见告警与排查
+
+### 1) `negative_prompt is not set`（质量建议）
+
+Qwen 官方建议：**传入空白字符串作为 negative_prompt**（例如 `" "`），而不是省略该字段。省略时可能出现质量下降提示，这不是服务故障。
+
+### 2) `RuntimeWarning: invalid value encountered in divide`（数值边界）
+
+这类告警通常来自 diffusers scheduler 在某些参数组合下触发数值边界。若你发现输出出现 NaN/花屏/全黑图，可按以下顺序处理：
+
+- **优先保证 `negative_prompt=" "`**
+- **避免极端参数**：不要把 `guidance_scale` 设为 `0`；建议 `1~9`
+- **提高 steps**：把 `num_inference_steps` 提到 `15~30`（过低可能更容易触发不稳定）
+- **先回到“均衡默认”组合**：确认输出稳定后，再逐步加大分辨率或 steps
