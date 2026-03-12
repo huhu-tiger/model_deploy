@@ -4,6 +4,7 @@ services:
   vllm_qwen3_tts:
     image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/vllm/vllm-omni:v0.14.0
     runtime: nvidia
+    container_name: vllm-qwen3-tts
     # environment:
     #   - HF_HOME=/root/.cache/huggingface
     volumes:
@@ -21,7 +22,11 @@ services:
         "--served-model-name", "Qwen3-TTS-12Hz-1.7B-CustomVoice",
         "--gpu-memory-utilization", "0.9",
         "--trust-remote-code",
-        "--enforce-eager"
+        # "--max-num-seqs", "4",
+        # "--max-num-batched-tokens", "4096",
+        # "--compilation-config", "{\"mode\": 3, \"cudagraph_capture_sizes\": [1, 2, 4]}",
+        # "--enable-request-id-headers",
+        "--enable-cache-dit-summary"
       ]
     restart: always
     deploy:
@@ -30,4 +35,4 @@ services:
             devices:
               - driver: nvidia
                 capabilities: [gpu]
-                device_ids: [ "2" ]
+                device_ids: [ "6" ]

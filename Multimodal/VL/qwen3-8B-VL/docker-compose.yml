@@ -1,0 +1,58 @@
+version: "3.9"
+
+services:
+  vllm-qwen3-vl-8b:
+    image: vllm/vllm-openai:v0.15.0-cu130
+    container_name: vllm-qwen3-vl-8b
+    runtime: nvidia
+    # environment:
+    #   - CUDA_VISIBLE_DEVICES=0,1  # 不设置则容器内可见所有已映射 GPU（device_ids 中的 1,6）
+    volumes:
+      - /media/llm:/media/llm
+    ipc: host
+    ports:
+      - "9116:9116"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    command:
+      - --served-model-name
+      - "Qwen3-VL-8B-Instruct"
+      - --model
+      - "/media/llm/Qwen/Qwen3-VL-8B-Instruct/"
+      - --port
+      - "9116"
+      - --trust-remote-code
+      - --tensor-parallel-size
+      - "2"
+      # - --enable-auto-tool-choice
+      # - --tool-call-parser
+      # - hermes
+      - --dtype
+      - bfloat16
+      - --gpu-memory-utilization
+      - "0.9"
+      - --max-model-len
+      - "16384"
+      - --max-num-seqs
+      - "64"
+      - --kv-cache-dtype
+      - fp8
+      - --mm-encoder-tp-mode
+      - data
+      - --mm-processor-cache-gb
+      - "2"
+      - --limit-mm-per-prompt.video
+      - "0"
+      - --limit-mm-per-prompt.image
+      - "2"
+    restart: always
+    deploy:
+        resources:
+          reservations:
+            devices:
+              - driver: nvidia
+                capabilities: [gpu]
+                device_ids: [ "1","6" ]

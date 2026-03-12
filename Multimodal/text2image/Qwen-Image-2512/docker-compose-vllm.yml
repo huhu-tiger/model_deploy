@@ -19,7 +19,7 @@ services:
         "--tensor-parallel-size", "4",  # 多卡并发数
         "--gpu-memory-utilization", "0.9",
         "--max-num-seqs", "4",
-        "--max-num-batched-tokens", "4096",
+        "--max-num-batched-tokens", "8192",
         "--host", "0.0.0.0",
         "--port", "8000",
         "--served-model-name", "qwen-image",
