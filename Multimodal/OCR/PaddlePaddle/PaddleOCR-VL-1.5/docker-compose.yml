@@ -1,0 +1,27 @@
+services:
+  paddleocr-vl:
+    image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-genai-vllm-server:latest-nvidia-gpu
+    container_name: paddleocr-genai-vllm-server
+    runtime: nvidia
+    environment:
+       - CUDA_VISIBLE_DEVICES=7  # 不设置则容器内可见所有已映射 GPU（device_ids 中的 1,6）
+    user: "0:0"
+    privileged: true
+    volumes:
+      - /media/llm/paddleocr:/home/paddleocr/.paddlex
+    ipc: host
+    ports:
+      - "8081:8081"
+    command: >
+      paddleocr genai_server
+      --model_name PaddleOCR-VL-1.5-0.9B
+      --host 0.0.0.0
+      --port 8081
+      --backend vllm
+    deploy:
+        resources:
+          reservations:
+            devices:
+              - driver: nvidia
+                capabilities: [gpu]
+                device_ids: [ "7" ]
