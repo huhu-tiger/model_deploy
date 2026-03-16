@@ -45,13 +45,3 @@ evalscope perf \
   --swanlab-api-key local \
   --name 'deepseek-v3.2_of_swanlab_log'
 
-
-
-echo ""
-echo "=========================================="
-echo "压测完成！"
-echo "=========================================="
-echo "查看结果:"
-echo "  - 文本报告: outputs/*/deepseek-v3.2/performance_summary.txt"
-echo "  - 可视化图表: outputs/charts/performance_metrics.png"
-echo "=========================================="

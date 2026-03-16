@@ -28,8 +28,8 @@ echo ""
 
 # 执行压测
 evalscope perf \
-  --model deepseek-v3.2 \
-  --url http://61.49.53.5:30002/v1/chat/completions \
+  --model Qwen3Guard-Gen-0.6B \
+  --url http://39.155.179.5:8014/v1/chat/completions \
   --api openai \
   --dataset openqa \
   --max-tokens 2048 \
@@ -38,7 +38,7 @@ evalscope perf \
   --sla-auto-tune \
   --sla-variable parallel \
   --sla-params '[{"p99_ttft": "<=2"}]' \
-  --parallel 2 \
-  --sla-upper-bound 32 \
+  --parallel 16 \
+  --sla-upper-bound 50 \
   --stream 
 
