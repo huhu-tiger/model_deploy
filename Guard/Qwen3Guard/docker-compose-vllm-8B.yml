@@ -1,9 +1,9 @@
 version: "3.9"
 
 services:
-  qwen3guard-gen-0.6b:
+  qwen3guard-gen-8b:
     image: model.vnet.com/sjhl/vllm-openai:v0.15.0-cu130
-    container_name: qwen3guard-gen-0_6b
+    container_name: qwen3guard-gen-8b
     restart: unless-stopped
     runtime: nvidia
     environment:
@@ -20,8 +20,8 @@ services:
       - "8014:8000"
     ipc: host
     command: >
-      --model "/media/llm/Qwen/Qwen3Guard-Gen-0.6B"
-      --served-model-name "Qwen3Guard-Gen-0.6B"
+      --model "/media/llm/Qwen/Qwen3Guard-Gen-8B"
+      --served-model-name "Qwen3Guard-Gen-8B"
       --host 0.0.0.0
       --port 8000
       --max-model-len 32768

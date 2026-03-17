@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  qwen3guard-gen-0.6b:
+    # 注意：CPU 必须支持 AVX512，且带 BF16/VNNI 指令集
+    # 可用如下命令检查（至少应包含 avx512f 和 avx512_bf16）：
+    #   lscpu | grep -iE 'avx512f|avx512_bf16|avx512_vnni'
+    # 如果没有 avx512_bf16，则该官方 CPU 镜像可能无法正常运行或性能极差
+    image: public.ecr.aws/q9t5s3a7/vllm-cpu-release-repo:v0.17.1
+    container_name: qwen3guard-gen-0_6b-cpu
+    restart: unless-stopped
+    # CPU 版本，不需要 GPU runtime
+    environment:
+      # 建议根据机器配置调整，单位 GiB，例如 40 表示 40GiB KV Cache，越大越好
+      - VLLM_CPU_KVCACHE_SPACE=40
+      # 绑定用于推理的 CPU 核心，示例为 0-31，可按需修改
+      - VLLM_CPU_OMP_THREADS_BIND=0-31
+    volumes:
+      # CPU 版仍然从本地挂载模型目录
+      - /media/llm:/media/llm
+    ports:
+      - "8016:8000"
+    # 官方文档推荐增加的权限设置，提升性能并避免部分 NUMA 相关 warning
+    security_opt:
+      - seccomp=unconfined
+    cap_add:
+      - SYS_NICE
+    shm_size: "4g"
+    command: >
+      --model "/media/llm/Qwen/Qwen3Guard-Gen-0.6B"
+      --served-model-name "Qwen3Guard-Gen-0.6B"
+      --dtype bfloat16
+      --host 0.0.0.0
+      --port 8000
+      --max-model-len 32768
