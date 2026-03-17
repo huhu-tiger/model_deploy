@@ -2,19 +2,6 @@
 
 本文档基于 [vLLM-Omni Image Edit API](https://docs.vllm.ai/projects/vllm-omni/en/latest/serving/image_edit_api/) 编写。
 
-## 启动服务器
-
-使用以下命令启动 vLLM 服务器：
-
-```bash
-vllm serve Qwen/Qwen-Image-Edit-2511 --omni --port 8000
-```
-
-参数说明：
-- `Qwen/Qwen-Image-Edit-2511`: 模型名称
-- `--omni`: 启用多模态支持
-- `--port 8000`: 指定服务端口（默认 8000）
-
 ## API 端点
 
 ```
@@ -36,12 +23,12 @@ Content-Type: multipart/form-data
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `size` | string | "auto" | 输出图像尺寸，如 "1024x1024"、"512x512" |
-| `n` | integer | 1 | 生成图像数量（1-10） |
+| `n` | integer | 1 | 生成图像数量（1-10），推荐1 |
 | `output_format` | string | "png" | 输出格式："png"、"jpg"、"jpeg" 或 "webp" |
 | `num_inference_steps` | integer | - | 扩散模型推理步数，步数越多质量越高但速度越慢 |
 | `guidance_scale` | float | - | 分类器自由引导强度，控制生成结果与提示词的贴合度 |
 | `seed` | integer | - | 随机种子，用于生成可复现的结果 |
-| `negative_prompt` | string | - | 负面提示词，描述不希望出现在输出中的内容 |
+| `negative_prompt` | string | - | 负面提示词，描述不希望出现在输出中的内容。可使用 `"low quality"` 等描述词，或传入空白字符串 `" "` |
 
 ## 响应格式
 
@@ -49,14 +36,16 @@ API 返回 JSON 格式的响应，包含 base64 编码的图像数据：
 
 ```json
 {
-  "created": 1701234567,
+  "created": 1773711146,
   "data": [
     {
       "b64_json": "<base64编码的图像数据>",
       "url": null,
       "revised_prompt": null
     }
-  ]
+  ],
+  "output_format": "jpeg",
+  "size": "512x512"
 }
 ```
 
@@ -66,6 +55,8 @@ API 返回 JSON 格式的响应，包含 base64 编码的图像数据：
   - `b64_json`: Base64 编码的图像数据
   - `url`: 图像 URL（当前为 null）
   - `revised_prompt`: 修订后的提示词（当前为 null）
+- `output_format`: 输出图像格式
+- `size`: 输出图像尺寸
 
 ## 请求示例
 
@@ -145,18 +136,20 @@ with open("edit_out_http.jpeg", "wb") as f:
 ### cURL - 本地文件
 
 ```bash
-curl --location --request POST 'http://39.155.179.4:9121/v1/images/edits' \
+curl --location --request POST 'http://39.155.179.5:9121/v1/images/edits' \
 --header 'Authorization: Bearer tk-OvOx9M2qhHxYHcO8SQJdAkFVHVnf1tUD' \
---form 'image=@"C:\\Users\\tao.jun\\Downloads\\864d038a61884653a452f7d82e855ac9.png"' \
+--form 'image=@"/path/to/your/image.png"' \
 --form 'prompt="改成两只小猫"' \
 --form 'size="512x512"' \
 --form 'output_format="jpeg"' \
---form 'num_inference_steps="10"' \
+--form 'num_inference_steps="20"' \
 --form 'guidance_scale="7.5"' \
---form 'negative_prompt=" "' \
 --form 'seed="777"' \
---form 'n="1"'
+--form 'n="1"' \
+--form 'negative_prompt="low quality"'
 ```
+
+> **提示**：`image=@` 后面跟本地文件路径，Windows 下使用 `"Y:\\cat.png"` 格式，Linux/macOS 下使用 `"/home/user/cat.png"` 格式。
 
 ### cURL - URL 格式（多图像）
 
@@ -315,6 +308,7 @@ with open("edit_out_http.jpeg", "wb") as f:
 - `num_inference_steps=10`
 - `guidance_scale=5`
 - `output_format="jpeg"`
+- `negative_prompt="low quality"`
 - `n=1`
 
 **质量/速度均衡（多数场景默认）**
@@ -322,7 +316,7 @@ with open("edit_out_http.jpeg", "wb") as f:
 - `size="768x768"`
 - `num_inference_steps=20`
 - `guidance_scale=7`
-- `negative_prompt=" "`
+- `negative_prompt="low quality, blurry"`
 - `output_format="jpeg"`
 - `n=1`
 
@@ -330,7 +324,10 @@ with open("edit_out_http.jpeg", "wb") as f:
 
 ### 1) `negative_prompt is not set`（质量建议）
 
-Qwen 官方建议：**传入空白字符串作为 negative_prompt**（例如 `" "`），而不是省略该字段。省略时可能出现质量下降提示，这不是服务故障。
+Qwen 官方建议：**不要省略 `negative_prompt` 字段**，省略时可能出现质量下降提示。推荐两种用法：
+
+- 使用描述性负面提示词，如 `"low quality"`、`"blurry, distorted"` 等，可有效提升生成质量
+- 传入空白字符串 `" "`，作为最低限度的占位
 
 ### 2) `RuntimeWarning: invalid value encountered in divide`（数值边界）
 
