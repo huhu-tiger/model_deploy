@@ -29,7 +29,7 @@ echo ""
 # 执行压测
 evalscope perf \
   --model Qwen3Guard-Gen-0.6B \
-  --url http://39.155.179.5:8014/v1/chat/completions \
+  --url http://10.20.201.215:8014/v1/chat/completions \
   --api openai \
   --dataset openqa \
   --max-tokens 2048 \
