@@ -16,7 +16,7 @@ services:
       [
         "vllm", "serve", "/media/llm/Qwen/Qwen-Image-2512",
         "--omni",
-        "--tensor-parallel-size", "4",  # 多卡并发数
+        "--tensor-parallel-size", "2",  # 多卡并发数
         "--gpu-memory-utilization", "0.9",
         "--max-num-seqs", "4",
         "--max-num-batched-tokens", "8192",
@@ -24,10 +24,10 @@ services:
         "--port", "8000",
         "--served-model-name", "qwen-image",
         "--trust-remote-code",
-        "--compilation-config", "{\"mode\": 3, \"cudagraph_capture_sizes\": [1, 2, 4]}",
         "--enable-request-id-headers",
         "--enable-cache-dit-summary"
       ]
+              # "--compilation-config", "{\"mode\": 3, \"cudagraph_capture_sizes\": [1, 2, 4]}", 4卡优化参数
     restart: always
     deploy:
         resources:
@@ -35,4 +35,4 @@ services:
             devices:
               - driver: nvidia
                 capabilities: [gpu]
-                device_ids: [ "2","3","4","5" ]
+                device_ids: [ "2","3" ]
