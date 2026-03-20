@@ -39,3 +39,4 @@ multimedia_piolt/data/video/input/*
 multimedia_piolt/data/video/input/*
 multimedia_piolt/resources/video/*.mp4
 multimedia_piolt/resources/ttf/*.ttf
+model_test/outputs

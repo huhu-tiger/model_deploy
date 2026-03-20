@@ -1,0 +1,34 @@
+version: "3.9"
+
+services:
+  qwen3guard-gen-0.6b:
+    image: model.vnet.com/sjhl/sglang:v0.5.9
+    container_name: qwen3guard-gen-0_6b-sglang
+    restart: always
+    command: >
+      python3 -m sglang.launch_server
+      --model-path /media/llm/Qwen/Qwen3Guard-Gen-0.6B
+      --port 30014
+      --host 0.0.0.0
+      --tp 1
+      --mem-fraction-static 0.8
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "7"
+      SGLANG_DG_CACHE_DIR: "/root/.cache/qwen3guard_gen_0_6b_cache"
+    volumes:
+      - /media/llm:/media/llm
+      - /media/llm/qwen3guard_gen_0_6b_cache:/root/.cache/qwen3guard_gen_0_6b_cache
+      - /etc/localtime:/etc/localtime
+    ports:
+      - "8015:30014"
+    ulimits:
+      memlock: -1
+    ipc: host
+    shm_size: "16g"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['7']
+              capabilities: [gpu]

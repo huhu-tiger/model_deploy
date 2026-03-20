@@ -1,0 +1,32 @@
+version: "3.9"
+
+services:
+  qwen3guard-gen-0.6b:
+    # 注意：CPU 必须支持 AVX512 + avx512_bf16 指令集
+    # 可用如下命令检查：
+    #   lscpu | grep -iE 'avx512f|avx512_bf16|avx512_vnni'
+    # 如果输出中包含 avx512_bf16，使用本文件（bfloat16）；否则请改用 docker-compose-vllm-cpu-float32.yml
+    image: public.ecr.aws/q9t5s3a7/vllm-cpu-release-repo:v0.17.1
+    container_name: qwen3guard-gen-0_6b-cpu
+    restart: unless-stopped
+    environment:
+      # KV Cache 大小，单位 GiB，建议根据机器内存调整
+      - VLLM_CPU_KVCACHE_SPACE=40
+      # 绑定推理使用的 CPU 核心，按需修改
+      - VLLM_CPU_OMP_THREADS_BIND=0-31
+    volumes:
+      - /media/llm:/media/llm
+    ports:
+      - "8016:8000"
+    security_opt:
+      - seccomp=unconfined
+    cap_add:
+      - SYS_NICE
+    shm_size: "4g"
+    command: >
+      --model "/media/llm/Qwen/Qwen3Guard-Gen-0.6B"
+      --served-model-name "Qwen3Guard-Gen-0.6B"
+      --dtype bfloat16
+      --host 0.0.0.0
+      --port 8000
+      --max-model-len 32768
