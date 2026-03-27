@@ -1,0 +1,64 @@
+version: "3.9"
+
+services:
+  vllm-qwen3-vl-32B:
+    image: model.vnet.com/sjhl/vllm-openai:v0.15.0-cu130
+    container_name: vllm-qwen3-vl-32B
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=6
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_DISABLE_REQUIRE=1   # 宿主机驱动 590.44 超出镜像声明的兼容白名单(<=570)，跳过约束检查
+      # 宿主机驱动 590.44，但容器 compat 层为 575.57，ldconfig 优先加载了 compat/libcuda.so.575
+      # 导致内核驱动(590) 与用户态库(575) 版本不匹配 → Error 803
+      # 修复：将真实宿主机驱动路径置于 LD_LIBRARY_PATH 最前，覆盖 compat 层
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64:/usr/local/cuda/lib64
+    volumes:
+      - /media/llm:/media/llm
+    ipc: host
+    ports:
+      - "9116:9116"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    command:
+      - --served-model-name
+      - "Qwen3-VL-32B-Instruct"
+      - --model
+      - "/media/llm/Qwen/Qwen3-VL-32B-Instruct/"
+      - --port
+      - "9116"
+      - --trust-remote-code
+      - --tensor-parallel-size
+      - "1"
+      # - --enable-auto-tool-choice
+      # - --tool-call-parser
+      # - hermes
+      - --dtype
+      - bfloat16
+      - --gpu-memory-utilization
+      - "0.9"
+      - --max-model-len
+      - "16384"
+      - --max-num-seqs
+      - "64"
+      - --kv-cache-dtype
+      - fp8
+      - --mm-encoder-tp-mode
+      - data
+      - --mm-processor-cache-gb
+      - "2"
+      - --limit-mm-per-prompt.video
+      - "0"
+      - --limit-mm-per-prompt.image
+      - "2"
+    restart: always
+    deploy:
+        resources:
+          reservations:
+            devices:
+              - driver: nvidia
+                capabilities: [gpu]
+                device_ids: [ "6" ]
