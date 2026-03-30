@@ -1,0 +1,45 @@
+version: "3.9"
+services:
+  yufeng-xguard-reason-0.6b:
+    image: model.vnet.com/sjhl/sglang:v0.5.9
+    container_name: yufeng-xguard-reason-0.6b
+    restart: always
+    command: >
+      python3 -m sglang.launch_server
+      --model-path /media/llm/Alibaba-AAIG/YuFeng-XGuard-Reason-0.6B/
+      --port 30001
+      --enable-metrics
+      --host 0.0.0.0
+      --tp 1
+      --mem-fraction-static 0.85
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=6
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_DISABLE_REQUIRE=1   # 宿主机驱动 590.44 超出镜像声明的兼容白名单(<=570)，跳过约束检查
+      # 宿主机驱动 590.44，但容器 compat 层为 575.57，ldconfig 优先加载了 compat/libcuda.so.575
+      # 导致内核驱动(590) 与用户态库(575) 版本不匹配 → Error 803
+      # 修复：将真实宿主机驱动路径置于 LD_LIBRARY_PATH 最前，覆盖 compat 层
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64:/usr/local/cuda/lib64
+    volumes:
+      - /media/llm:/media/llm
+      - /media/llm/Alibaba-AAIG/YuFeng-XGuard-Reason-0.6B/cache:/root/.cache/yufeng-xguard-reason-0.6b_cache
+      - /etc/localtime:/etc/localtime
+    ports:
+      - "30001:30001"
+    ulimits:
+      memlock: -1
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 600s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['6']
+              capabilities: [gpu]
