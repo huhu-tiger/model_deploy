@@ -8,7 +8,7 @@ services:
       --model "/media/llm/Alibaba-AAIG/YuFeng-XGuard-Reason-0.6B"
       --served-model-name "YuFeng-XGuard-Reason-0.6B"
       --host 0.0.0.0
-      --port 30001
+      --port 8013
       --max-model-len 32768
     environment:
       - NVIDIA_VISIBLE_DEVICES=6
@@ -22,13 +22,13 @@ services:
       - /media/llm:/media/llm 
       - /etc/localtime:/etc/localtime
     ports:
-      - "30001:30001"
+      - "8013:8013"
     ulimits:
       memlock: -1
     ipc: host
     shm_size: "32g"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8013/health"]
       interval: 30s
       timeout: 10s
       retries: 3

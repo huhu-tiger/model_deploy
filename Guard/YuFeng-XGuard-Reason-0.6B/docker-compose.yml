@@ -7,7 +7,7 @@ services:
     command: >
       python3 -m sglang.launch_server
       --model-path /media/llm/Alibaba-AAIG/YuFeng-XGuard-Reason-0.6B/
-      --port 30001
+      --port 8013
       --enable-metrics
       --host 0.0.0.0
       --tp 1
@@ -25,13 +25,13 @@ services:
       - /media/llm/Alibaba-AAIG/YuFeng-XGuard-Reason-0.6B/cache:/root/.cache/yufeng-xguard-reason-0.6b_cache
       - /etc/localtime:/etc/localtime
     ports:
-      - "30001:30001"
+      - "8013:8013"
     ulimits:
       memlock: -1
     ipc: host
     shm_size: "32g"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8013/health"]
       interval: 30s
       timeout: 10s
       retries: 3
