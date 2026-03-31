@@ -28,11 +28,11 @@ echo ""
 
 # 执行压测
 evalscope perf \
-  --model Qwen3Guard-Gen-0.6B \
-  --url http://10.20.201.215:8014/v1/chat/completions \
+  --model YuFeng-XGuard-Reason-0.6B \
+  --url http://39.155.179.5:30001/v1/chat/completions \
   --api openai \
   --dataset openqa \
-  --max-tokens 2048 \
+  --max-tokens 200 \
   --temperature 0.1 \
   --top-p 1.0 \
   --sla-auto-tune \
