@@ -1,17 +1,17 @@
 version: "3.9"
 services:
-  openguardrails-text-2510:
+  Llama-Guard-2-8B:
     image: model.vnet.com/sjhl/vllm-openai:v0.15.0-cu130
-    container_name: openguardrails-text-2510
+    container_name: Llama-Guard-2-8B
     restart: always
     command: >
-      --model "/media/llm/xiangxinai/OpenGuardrails-Text-2510"
-      --served-model-name "OpenGuardrails-Text-2510"
+      --model "/media/llm/meta-llama/Meta-Llama-Guard-2-8B/"
+      --served-model-name "Llama-Guard-2-8B"
       --host 0.0.0.0
-      --port 8000
+      --port 8017
       --max-model-len 8192
     environment:
-      - NVIDIA_VISIBLE_DEVICES=6
+      - NVIDIA_VISIBLE_DEVICES=7
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       - NVIDIA_DISABLE_REQUIRE=1   # 宿主机驱动 590.44 超出镜像声明的兼容白名单(<=570)，跳过约束检查
       - VLLM_USE_MODELSCOPE=true
@@ -23,13 +23,13 @@ services:
       - /media/llm:/media/llm 
       - /etc/localtime:/etc/localtime
     ports:
-      - "8015:8000"
+      - "8017:8017"
     ulimits:
       memlock: -1
     ipc: host
     shm_size: "32g"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8017/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -39,5 +39,5 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['6']
+              device_ids: ['7']
               capabilities: [gpu]
