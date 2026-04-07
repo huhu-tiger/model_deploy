@@ -87,3 +87,56 @@ OR_FUSION_THRESHOLD=0.5
 - `OR_FUSION_THRESHOLD` ∈ {0.45, 0.50, 0.55, 0.60, 0.65}
 
 并对比 `总体正确率 + Hard正确率 + 英文正确率`。
+
+## 7. 运行说明：使用不同 input（不影响原 data1.csv 结果）
+
+三个脚本都支持 `--input`、`--output`、`--markdown-output` 参数。
+
+- 默认 `--input` 是 `datasets/data1.csv`
+- 如果你要跑新的数据集（例如 `datasets/data1_err.csv`），只需要显式传入新的输入和输出文件名
+- 只要输出文件名不和原来 `data1_*` 冲突，就不会覆盖原结果
+
+### 7.1 Sentinel
+
+```bash
+python3 prompt-injection-jailbreak-sentinel-v2.py \
+  --input datasets/data1_err.csv \
+  --output output/data1_err_sentinel_results.csv \
+  --markdown-output output/data1_err_sentinel_results.md
+```
+
+### 7.2 Qwen3Guard
+
+```bash
+python3 Qwen3Guard.py \
+  --input datasets/data1_err.csv \
+  --output output/data1_err_guard_results.csv \
+  --markdown-output output/data1_err_guard_results.md
+```
+
+### 7.3 融合脚本（qwen3_sentinel_or.py）
+
+```bash
+python3 qwen3_sentinel_or.py \
+  --input datasets/data1_err.csv \
+  --output output/data1_err_qwen_sentinel_or_results.csv \
+  --markdown-output output/data1_err_qwen_sentinel_or_results.md
+```
+
+### 7.4 强烈建议使用绝对路径（避免跑错文件）
+
+```bash
+python3 /media/source/model_deploy/model_test/Guard/prompt-injection-jailbreak-sentinel-v2.py \
+  --input /media/source/model_deploy/model_test/Guard/datasets/data1_err.csv \
+  --output /media/source/model_deploy/model_test/Guard/output/data1_err_sentinel_results.csv \
+  --markdown-output /media/source/model_deploy/model_test/Guard/output/data1_err_sentinel_results.md
+```
+
+### 7.5 常见问题：为什么结果里出现“未知”
+
+评测脚本计算 `真实标签` 时依赖 `label` 列：
+
+- `1 -> 风险`
+- `0 -> 安全`
+
+如果输入 CSV 没有 `label`，就会出现 `真实标签=未知`，并导致 `是否判断正确` 无法正确计算。
