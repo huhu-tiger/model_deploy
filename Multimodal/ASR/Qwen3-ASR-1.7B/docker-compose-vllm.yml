@@ -1,0 +1,49 @@
+version: "3.9"
+
+services:
+  vllm_qwen3_asr:
+    image: local/vllm-openai-audio:v0.19.0-cu130
+    container_name: vllm-qwen3-asr
+    runtime: nvidia
+    # 部分 docker-compose 校验器不接受顶层 gpus 字段；GPU 通过 nvidia runtime + NVIDIA_VISIBLE_DEVICES + deploy.device_ids 指定
+    environment:
+    #   - HF_HOME=/root/.cache/huggingface
+        - NVIDIA_VISIBLE_DEVICES=7
+        # - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+        # # 宿主机驱动高于镜像白名单时报错时可取消注释
+        # # - NVIDIA_DISABLE_REQUIRE=1
+        # - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64:/usr/local/cuda/lib64
+    volumes:
+      - /media/llm:/media/llm
+    ipc: host
+    shm_size: "8gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ports:
+      - "9131:8091"
+    # 与 vllm serve ENTRYPOINT 对齐：模型路径用位置参数（避免 --model 弃用告警）
+    command: >
+      /media/llm/Qwen/Qwen3-ASR-1.7B
+      --served-model-name "Qwen3-ASR-1.7B"
+      --trust-remote-code
+      --gpu-memory-utilization 0.6
+      --max-model-len 32768
+      --max-num-batched-tokens 4096
+      --host 0.0.0.0
+      --port 8091
+      --limit-mm-per-prompt '{"audio": 1}'
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["7"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8091/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
