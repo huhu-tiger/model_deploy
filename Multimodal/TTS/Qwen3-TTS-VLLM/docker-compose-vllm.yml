@@ -15,7 +15,8 @@ services:
         - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64:/usr/local/cuda/lib64
     volumes:
       - /media/llm:/media/llm
-      - ./stage_configs/qwen3_tts_no_async_chunk.yaml:/stage_configs/qwen3_tts_no_async_chunk.yaml:ro
+      # - ./stage_configs/qwen3_tts_custom.yaml:/stage_configs/qwen3_tts_no_async_chunk.yaml:ro
+      - ./stage_configs/qwen3_tts.yaml:/stage_configs/qwen3_tts-custom.yaml:ro
     ipc: host
     shm_size: "8gb"
     ulimits:
@@ -31,7 +32,7 @@ services:
       - /media/llm/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice
       - --omni
       - --stage-configs-path
-      - /stage_configs/qwen3_tts_no_async_chunk.yaml
+      - /stage_configs/qwen3_tts-custom.yaml
       - --host
       - "0.0.0.0"
       - --port
@@ -44,7 +45,7 @@ services:
       - "0.9"
       - --trust-remote-code
       - --max-num-seqs
-      - "2"
+      - "1"
       - --enable-cache-dit-summary
     restart: unless-stopped
     deploy:
