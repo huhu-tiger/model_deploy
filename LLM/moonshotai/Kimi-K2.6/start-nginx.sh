@@ -9,4 +9,5 @@ python3 -m sglang.launch_server --model-path /media/llm/moonshotai/Kimi-K2.6 \
     --trust-remote-code \
     --reasoning-parser kimi_k2 \
     --tool-call-parser kimi_k2 \
+    --context-length 32768
 
