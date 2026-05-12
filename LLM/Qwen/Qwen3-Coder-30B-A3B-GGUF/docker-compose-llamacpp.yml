@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  qwen3-coder-30b-a3b-llamacpp:
+    # llama.cpp 原生支持 GGUF 格式及 MoE 架构，兼容 OpenAI API
+    # https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF
+    # https://huggingface.co/ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF
+    image: ghcr.io/ggerganov/llama.cpp:full-cuda
+    container_name: Qwen3-Coder-30B-A3B-LlamaCpp
+    restart: always
+    command: >
+      --model /media/llm/Qwen/Qwen3-Coder-30B-A3B-Instruct-GGUF/Qwen3-Coder-30B-A3B-Instruct-UD-Q8_K_XL.gguf
+      --n-gpu-layers 99
+      --ctx-size 8192
+      --host 0.0.0.0
+      --port 30002
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "2"  # 指定使用第 3 张 GPU
+      CUDA_VISIBLE_DEVICES: "2"
+    volumes:
+      - /media/llm:/media/llm
+      - /etc/localtime:/etc/localtime
+    ports:
+      - "30002:30002"
+    ulimits:
+      memlock: -1
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30002/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['2']
+              capabilities: [gpu]

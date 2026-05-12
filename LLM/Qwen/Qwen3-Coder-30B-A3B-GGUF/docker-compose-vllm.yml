@@ -1,0 +1,43 @@
+version: "3.9"
+# 动态量化会降低推理性能，不推荐使用
+services:
+  qwen3-coder-30b-a3b-gguf:
+    image: model.vnet.com/sjhl/vllm-openai:v0.20.2-cu129
+    container_name: Qwen3-Coder-30B-A3B-GGUF
+    restart: always
+    # https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct (safetensors)
+    # 使用 bitsandbytes 运行时 INT8 量化，无需 GGUF 文件
+    command: >
+      /media/llm/Qwen/Qwen3-Coder-30B-A3B-Instruct
+      --served-model-name Qwen3-Coder-30B-A3B-Instruct
+      --quantization bitsandbytes
+      --load-format bitsandbytes
+      --dtype auto
+      --gpu-memory-utilization 0.9
+      --max-model-len 8192
+      --host 0.0.0.0
+      --port 30001
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "2"  # 指定使用第 3 张 GPU
+    volumes:
+      - /media/llm:/media/llm
+      - /etc/localtime:/etc/localtime
+    ports:
+      - "30001:30001"
+    ulimits:
+      memlock: -1
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 600s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['2']
+              capabilities: [gpu]
