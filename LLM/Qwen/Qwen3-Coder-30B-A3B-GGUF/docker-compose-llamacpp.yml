@@ -5,17 +5,26 @@ services:
     # llama.cpp 原生支持 GGUF 格式及 MoE 架构，兼容 OpenAI API
     # https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF
     # https://huggingface.co/ggml-org/Qwen3-Coder-30B-A3B-Instruct-Q8_0-GGUF
-    image: ghcr.io/ggerganov/llama.cpp:full-cuda
+    # full-cuda 镜像入口为包装脚本，需使用 --server 子命令，参数用短选项
+    image: ghcr.io/ggml-org/llama.cpp:full-cuda
     container_name: Qwen3-Coder-30B-A3B-LlamaCpp
     restart: always
     command: >
-      --model /media/llm/Qwen/Qwen3-Coder-30B-A3B-Instruct-GGUF/Qwen3-Coder-30B-A3B-Instruct-UD-Q8_K_XL.gguf
-      --n-gpu-layers 99
-      --ctx-size 8192
+      --server
+      -m /media/llm/Qwen/Qwen3-Coder-30B-A3B-Instruct-GGUF/Qwen3-Coder-30B-A3B-Instruct-UD-Q4_K_XL.gguf
+      -ngl 99
+      -c 32768
+      -fa on
+      -cb
+      -np 8
+      -b 4096
+      -ub 512
+      -ctk q8_0
+      -ctv q8_0
       --host 0.0.0.0
       --port 30002
     environment:
-      NVIDIA_VISIBLE_DEVICES: "2"  # 指定使用第 3 张 GPU
+      NVIDIA_VISIBLE_DEVICES: "2"  # 指定使用第 3 张 GPU（A800 80GB）
       CUDA_VISIBLE_DEVICES: "2"
     volumes:
       - /media/llm:/media/llm
