@@ -1,0 +1,40 @@
+version: "3.9"
+services:
+  qwen3-6-27b-vllm:
+    image: model.vnet.com/sjhl/vllm-openai:v0.20.2-cu129
+    container_name: Qwen3.6-27B-vllm
+    restart: always
+    command: >
+      /media/llm/Qwen/Qwen3.6-27B
+      --port 30001
+      --served-model-name Qwen3.6-27B
+      --host 0.0.0.0
+      --tensor-parallel-size 4
+      --max-model-len 32768
+      --reasoning-parser qwen3
+      --speculative-config '{"method":"qwen3_next_mtp","num_speculative_tokens":2}'
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "2,3,5,6"
+      VLLM_USE_MODELSCOPE: "true"
+    volumes:
+      - /media/llm:/media/llm
+      - /etc/localtime:/etc/localtime
+    ports:
+      - "30001:30001"
+    ulimits:
+      memlock: -1
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 600s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['2', '3', '5', '6']
+              capabilities: [gpu]
