@@ -41,3 +41,4 @@ multimedia_piolt/resources/video/*.mp4
 multimedia_piolt/resources/ttf/*.ttf
 model_test/outputs
 model_test/Guard/output/
+LLM/Qwen/Qwen3-Coder-30B-A3B-GGUF/test/

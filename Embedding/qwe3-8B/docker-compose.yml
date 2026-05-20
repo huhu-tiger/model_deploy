@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   qwen3-embedding-8b:
-    image: model.vnet.com/sjhl/vllm-openai:v0.9.1
+    image: model.vnet.com/sjhl/vllm-openai:v0.11.0
     container_name: qwen3-embedding-8b
     runtime: nvidia
     environment:

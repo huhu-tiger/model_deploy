@@ -1,0 +1,43 @@
+version: "3.9"
+services:
+  qwen3-coder-30b-a3b:
+    image: model.vnet.com/sjhl/sglang:v0.5.11
+    container_name: Qwen3-Coder-30B-A3B
+    restart: always
+    command: >
+      python3 -m sglang.launch_server
+      --model-path /media/llm/Qwen/Qwen3-Coder-30B-A3B-Instruct
+      --port 30001
+      --enable-metrics
+      --host 0.0.0.0
+      --tp 2
+      --reasoning-parser qwen3
+      --tool-call-parser qwen3_coder
+      --mem-fraction-static 0.8
+      --context-length 8192 
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "2,3"  # 指定使用第 3 和第 4 张 GPU
+      SGLANG_DG_CACHE_DIR: "/root/.cache/qwen3-coder-30b-a3b_cache"
+    volumes:
+      - /media/llm:/media/llm
+      - /media/llm/qwen3-coder-30b-a3b_cache:/root/.cache/qwen3-coder-30b-a3b_cache
+      - /etc/localtime:/etc/localtime
+    ports:
+      - "30001:30001"
+    ulimits:
+      memlock: -1
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 600s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['2', '3']
+              capabilities: [gpu]
