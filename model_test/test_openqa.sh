@@ -30,13 +30,14 @@ echo ""
 # 执行压测 - 测试多个并发级别
 evalscope perf \
   --model deepseek-v3.2 \
-  --url http://61.49.53.5:30002/v1/chat/completions \
+  --url http://61.49.53.41:30001/v1/chat/completions \
+  --extra-args '{"chat_template_kwargs": {"enable_thinking": false}}' \
   --api openai \
   --dataset openqa \
-  --parallel 1 2 4 8 16 32 \
-  --number 2 4 8 16 32 64 \
+  --parallel  32 48 64\
+  --number 64 96 128\
   --min-prompt-length 10 \
-  --max-prompt-length 2000 \
+  --max-prompt-length 8000 \
   --max-tokens 2048 \
   --temperature 0.1 \
   --top-p 1.0 \

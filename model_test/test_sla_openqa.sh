@@ -29,16 +29,16 @@ echo ""
 # 执行压测
 evalscope perf \
   --model YuFeng-XGuard-Reason-0.6B \
-  --url http://39.155.179.5:30001/v1/chat/completions \
+  --url http://61.49.53.5:30001/v1/chat/completions \
   --api openai \
   --dataset openqa \
-  --max-tokens 200 \
+  --max-tokens 2048 \
   --temperature 0.1 \
   --top-p 1.0 \
   --sla-auto-tune \
   --sla-variable parallel \
-  --sla-params '[{"p99_ttft": "<=2"}]' \
-  --parallel 16 \
-  --sla-upper-bound 50 \
+  --sla-params '[{"p99_ttft": "<=1"}]' \
+  --parallel 64 \
+  --sla-upper-bound 128 \
   --stream 
 
