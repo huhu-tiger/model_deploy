@@ -1,0 +1,59 @@
+version: "3.9"
+
+services:
+  vllm-qwen3-vl-8b:
+    image: model.vnet.com/sjhl/vllm-openai:v0.19.0-cu130
+    container_name: vllm-qwen3-vl-8b
+    runtime: nvidia
+    network_mode: host
+    environment:
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - NO_PROXY=localhost,127.0.0.1,.local,.vnet.com
+      - VLLM_IMAGE_FETCH_TIMEOUT=60
+      - VLLM_VIDEO_FETCH_TIMEOUT=120
+      - VLLM_AUDIO_FETCH_TIMEOUT=60
+    volumes:
+      - /media/llm:/media/llm
+    ipc: host
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    command:
+      - --served-model-name
+      - "Qwen3-VL-8B-Instruct"
+      - --model
+      - "/media/llm/Qwen/Qwen3-VL-8B-Instruct/"
+      - --port
+      - "9116"
+      - --trust-remote-code
+      - --tensor-parallel-size
+      - "2"
+      - --dtype
+      - bfloat16
+      - --gpu-memory-utilization
+      - "0.9"
+      - --max-model-len
+      - "16384"
+      - --max-num-seqs
+      - "64"
+      - --kv-cache-dtype
+      - fp8
+      - --mm-encoder-tp-mode
+      - data
+      - --mm-processor-cache-gb
+      - "2"
+      - --limit-mm-per-prompt.video
+      - "0"
+      - --limit-mm-per-prompt.image
+      - "2"
+    restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["1", "6"]

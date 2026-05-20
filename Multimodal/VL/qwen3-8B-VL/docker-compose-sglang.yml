@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+  sglang-qwen3-vl-8b:
+    image: model.vnet.com/sjhl/sglang:v0.5.8
+    container_name: sglang-qwen3-vl-8b
+    runtime: nvidia
+    network_mode: host
+    environment:
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - NO_PROXY=localhost,127.0.0.1,.local,.vnet.com
+      - SGLANG_USE_CUDA_IPC_TRANSPORT=1
+    volumes:
+      - /media/llm:/media/llm
+    ipc: host
+    shm_size: "16g"
+    ulimits:
+      memlock: -1
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    command: >
+      python3 -m sglang.launch_server
+      --model-path /media/llm/Qwen/Qwen3-VL-8B-Instruct/
+      --served-model-name Qwen3-VL-8B-Instruct
+      --host 0.0.0.0
+      --port 9116
+      --tp 2
+      --dtype bfloat16
+      --context-length 16384
+      --mem-fraction-static 0.9
+      --mm-attention-backend fa3
+      --mm-per-request-timeout 60
+    restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["1", "6"]
