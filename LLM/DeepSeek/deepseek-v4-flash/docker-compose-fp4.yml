@@ -1,0 +1,77 @@
+# DeepSeek-V4-Flash (FP4) — SGLang v0.5.12 — H100 Max-Throughput Recipe
+# Reference: https://lmsysorg.mintlify.app/cookbook/autoregressive/DeepSeek/DeepSeek-V4
+# Hardware: H100 × 8 | Variant: Flash (285B) | Recipe: max-throughput
+#
+# 显存参考（你当前 idle）: ~74636/81559 MiB/卡，余量 ~7 GiB → 不宜直接 256/512
+#
+# ┌─────────┬────────────────────────┬────────────────────────┬──────────────────┐
+# │ 档位    │ max-running-requests   │ cuda-graph-max-bs      │ mem-fraction     │
+# ├─────────┼────────────────────────┼────────────────────────┼──────────────────┤
+# │ 保守档  │ 128（默认）            │ 256（默认）            │ 0.85（默认）     │
+# │ 试探档  │ 160                    │ 320                    │ 0.85             │
+# │ 不建议  │ 256（引擎默认）        │ 512（引擎默认）        │ 0.88             │
+# └─────────┴────────────────────────┴────────────────────────┴──────────────────┘
+#
+# 切换试探档（压测无 OOM 再用）:
+#   export SGLANG_MAX_RUNNING_REQUESTS=160 SGLANG_CUDA_GRAPH_MAX_BS=320
+#   docker compose -f docker-compose-fp4.yml up -d
+#
+# 恢复保守档:
+#   unset SGLANG_MAX_RUNNING_REQUESTS SGLANG_CUDA_GRAPH_MAX_BS
+#   docker compose -f docker-compose-fp4.yml up -d
+#
+# 或使用同目录 .env.probe: docker compose -f docker-compose-fp4.yml --env-file .env.probe up -d
+#
+# 压测判据: 负载时单卡显存 < ~79000 MiB 且无 OOM/retract → 可再小幅上调；否则保持保守档
+# prefill 为主可试: --moe-runner-backend flashinfer_mxfp4（需 FlashInfer≥0.6.11）
+
+services:
+  deepseek-v4-flash:
+    image: model.vnet.com/sjhl/sglang:v0.5.12
+    container_name: deepseek-v4-flash-fp4
+    restart: unless-stopped
+    command: >
+      sglang serve
+      --trust-remote-code
+      --model-path /models/DeepSeek-V4-Flash
+      --tp 8
+      --moe-runner-backend marlin
+      --mem-fraction-static ${SGLANG_MEM_FRACTION_STATIC:-0.85}
+      --chunked-prefill-size ${SGLANG_CHUNKED_PREFILL_SIZE:-8192}
+      --cuda-graph-max-bs ${SGLANG_CUDA_GRAPH_MAX_BS:-256}
+      --max-running-requests ${SGLANG_MAX_RUNNING_REQUESTS:-128}
+      --schedule-policy lpm
+      --swa-full-tokens-ratio 0.1
+      --enable-metrics
+      --tool-call-parser deepseekv4
+      --reasoning-parser deepseek-v4
+      --host 0.0.0.0
+      --port 30000
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+      SGLANG_DG_CACHE_DIR: "/root/.cache/deepseek-v4-fp4-flash_cache"
+      NCCL_DEBUG: "warn"
+    volumes:
+      - /media/llm/deepseek-ai/DeepSeek-V4-Flash:/models/DeepSeek-V4-Flash:ro
+      - /media/llm/deepseek-v4-fp4-flash_cache:/root/.cache/deepseek-v4-fp4-flash_cache
+      - /etc/localtime:/etc/localtime
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ipc: host
+    shm_size: "32g"
+    ports:
+      - "30000:30000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30000/health"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 900s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 8
+              capabilities: [gpu]
