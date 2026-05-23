@@ -1,0 +1,61 @@
+version: "3.9"
+
+# z-lab/Qwen3.6-27B-DFlash — 官方 SGLang 启动参数（本地路径）
+# ModelScope: https://modelscope.cn/models/z-lab/Qwen3.6-27B-DFlash
+# HuggingFace: https://huggingface.co/z-lab/Qwen3.6-27B-DFlash
+# 目标: /media/llm/Qwen/Qwen3.6-27B  草稿: /media/llm/z-lab/Qwen3.6-27B-DFlash
+# SGLang 需 PR #23000 支持（见草稿 README）
+# 单卡 tp=1 易 KV 池 OOM；与 Qwen3.6-27B 一致使用 4 卡 TP
+#
+# 限制: DFLASH 不支持 grammar-constrained decoding（SGLang 当前实现）
+#   - 勿加 --tool-call-parser / --enable-auto-tool-choice
+#   - 客户端勿传 tools、response_format=json_schema、guided_json/regex/grammar
+#   - 需工具调用或 JSON Schema 约束时，改用无 DFLASH 的 compose（如 Qwen3.6-27B docker-compose-sglang.yml）
+
+services:
+  qwen3-6-27b-dflash:
+    image: model.vnet.com/sjhl/sglang:v0.5.12
+    container_name: Qwen3.6-27B-DFlash
+    restart: always
+    runtime: nvidia
+    command: >
+      sglang serve
+      --model-path /media/llm/Qwen/Qwen3.6-27B
+      --speculative-algorithm DFLASH
+      --speculative-draft-model-path /media/llm/z-lab/Qwen3.6-27B-DFlash
+      --speculative-num-draft-tokens 16
+      --tp-size 4
+      --attention-backend fa3
+      --mem-fraction-static 0.85
+      --context-length 32768
+      --mamba-scheduler-strategy extra_buffer
+      --trust-remote-code
+      --served-model-name Qwen3.6-27B
+      --host 0.0.0.0
+      --port 30001
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "2,3,5,6"
+      SGLANG_DG_CACHE_DIR: "/root/.cache/qwen3-6-27b-dflash_cache"
+    volumes:
+      - /media/llm:/media/llm
+      - /media/llm/qwen3-6-27b-dflash_cache:/root/.cache/qwen3-6-27b-dflash_cache
+      - /etc/localtime:/etc/localtime
+    ports:
+      - "30001:30001"
+    ulimits:
+      memlock: -1
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 900s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['2', '3', '5', '6']
+              capabilities: [gpu]

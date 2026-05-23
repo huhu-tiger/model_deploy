@@ -1,0 +1,70 @@
+version: "3.9"
+
+# vLLM 加载 palmfuture GPTQ-Int4 MoE（v0.20.2）
+# 权重: /media/llm/palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4
+# 不支持 GPTQ Int8 → 请用 SGLang（docker-compose-sglang.yml）
+#
+# 高吞吐档位（4×A800，压测无 OOM 再上调）:
+# ┌─────────┬──────────────┬─────────────────────────┬──────────────────┐
+# │ 档位    │ max-num-seqs │ max-num-batched-tokens  │ gpu-memory-util  │
+# ├─────────┼──────────────┼─────────────────────────┼──────────────────┤
+# │ 保守档  │ 64           │ 8192                    │ 0.85             │
+# │ 当前档  │ 96           │ 32768                   │ 0.90             │
+# │ 激进档  │ 128          │ 32768                   │ 0.90             │
+# └─────────┴──────────────┴─────────────────────────┴──────────────────┘
+#
+# 纯吞吐压测: 可注释 reasoning-parser / tool-call 相关三行（tools 会走 grammar）
+# 业务要 32k 上下文: 保持 max-model-len 32768；仅短 prompt 可改为 16384 换并发
+# MoE Int4 在 SGLang(moe_wna16) 上往往比 vLLM 更快，可 A/B 对比
+
+services:
+  qwen3-6-35b-a3b-gptq-int4-vllm:
+    image: model.vnet.com/sjhl/vllm-openai:v0.20.2-cu129
+    container_name: Qwen3.6-35B-A3B-GPTQ-Int4-vLLM
+    restart: always
+    runtime: nvidia
+    command: >
+      /media/llm/palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4
+      --served-model-name Qwen3.6-35B-A3B
+      --host 0.0.0.0
+      --port 30001
+      --tensor-parallel-size 4
+      --trust-remote-code
+      --dtype float16
+      --quantization gptq_marlin
+      --gpu-memory-utilization 0.90
+      --max-model-len 32768
+      --max-num-seqs 96
+      --max-num-batched-tokens 32768
+      --enable-chunked-prefill
+      --enable-prefix-caching
+      --reasoning-parser qwen3
+      --enable-auto-tool-choice
+      --tool-call-parser qwen3_coder
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "2,3,5,6"
+      VLLM_USE_MODELSCOPE: "false"
+      NCCL_DEBUG: "warn"
+    volumes:
+      - /media/llm:/media/llm
+      - /etc/localtime:/etc/localtime
+    ports:
+      - "30001:30001"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 900s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['2', '3', '5', '6']
+              capabilities: [gpu]

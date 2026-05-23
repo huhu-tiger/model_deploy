@@ -1,0 +1,69 @@
+version: "3.9"
+
+services:
+  qwen3-6-35b-a3b-llamacpp:
+    # llama.cpp 原生支持 GGUF 格式及 MoE 架构，兼容 OpenAI API
+    # https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF-MTP
+    image: model.vnet.com/sjhl/server-cuda13-b9265
+    container_name: Qwen3.6-35B-A3B-LlamaCpp
+    restart: always
+    runtime: nvidia
+    command:
+      - -m
+      - /media/llm/unsloth/Qwen3.6-35B-A3B-GGUF-MTP/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf
+      - -a
+      - Qwen3.6-35B-A3B
+      - -ngl
+      - "99"
+      - -ts
+      - "1,1,1,1"
+      - -sm
+      - row
+      - -c
+      - "32768"
+      - -fa
+      - on
+      - -cb
+      - -np
+      - "1"
+      - -b
+      - "4096"
+      - -ub
+      - "512"
+      - -ctk
+      - q8_0
+      - -ctv
+      - q8_0
+      - --spec-type
+      - draft-mtp
+      - --spec-draft-n-max
+      - "2"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "30002"
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "2,3,5,6"  # 指定使用第 3/4/6/7 张 GPU
+      CUDA_VISIBLE_DEVICES: "2,3,5,6"
+    volumes:
+      - /media/llm:/media/llm
+      - /etc/localtime:/etc/localtime
+    ports:
+      - "30002:30002"
+    ulimits:
+      memlock: -1
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30002/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['2', '3', '5', '6']
+              capabilities: [gpu]

@@ -1,6 +1,6 @@
-pip install evalscope[all] ==1.5.0
-pip install transformers -U
-pip install huggingface_hub==0.25.2
-#可视化插件
-pip install swanlab
-pip install 'swanlab[dashboard]'  -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
+evalscope[all]==1.5.0
+transformers
+huggingface_hub==0.25.2
+# 可视化插件
+swanlab
+swanlab[dashboard]

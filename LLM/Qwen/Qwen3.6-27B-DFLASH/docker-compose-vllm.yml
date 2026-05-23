@@ -1,0 +1,61 @@
+version: "3.9"
+
+# vLLM + DFlash — z-lab/Qwen3.6-27B-DFlash
+# ModelScope: https://modelscope.cn/models/z-lab/Qwen3.6-27B-DFlash
+# HuggingFace: https://huggingface.co/z-lab/Qwen3.6-27B-DFlash
+#
+# 目标: /media/llm/Qwen/Qwen3.6-27B
+# 草稿: /media/llm/z-lab/Qwen3.6-27B-DFlash
+#
+# 官方 vLLM 需含 DFlash + Qwen3.6 SWA 修复（PR #40898 / #36847），v0.20.2 可能无法启动 DFlash，
+# 需使用已合入上述 PR 的 vllm 镜像后再 up。
+# SGLang 同目录: docker-compose-sglang.yml（端口 30001）；本文件默认 30003 避免冲突。
+
+services:
+  qwen3-6-27b-dflash-vllm:
+    image: model.vnet.com/sjhl/vllm-openai:v0.20.2-cu129
+    container_name: Qwen3.6-27B-DFlash-vLLM
+    restart: always
+    runtime: nvidia
+    command: >
+      /media/llm/Qwen/Qwen3.6-27B
+      --served-model-name Qwen3.6-27B
+      --host 0.0.0.0
+      --port 30001
+      --tensor-parallel-size 4
+      --trust-remote-code
+      --attention-backend flash_attn
+      --gpu-memory-utilization 0.90
+      --max-model-len 32768
+      --max-num-batched-tokens 32768
+      --max-num-seqs 96
+      --enable-chunked-prefill
+      --enable-prefix-caching
+      --reasoning-parser qwen3
+      --speculative-config '{"method":"dflash","model":"/media/llm/z-lab/Qwen3.6-27B-DFlash","num_speculative_tokens":15}'
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "2,3,5,6"
+      VLLM_USE_MODELSCOPE: "false"
+      NCCL_DEBUG: "warn"
+    volumes:
+      - /media/llm:/media/llm
+      - /etc/localtime:/etc/localtime
+    ports:
+      - "30001:30001"
+    ulimits:
+      memlock: -1
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 900s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['2', '3', '5', '6']
+              capabilities: [gpu]
