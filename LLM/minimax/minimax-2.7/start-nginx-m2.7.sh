@@ -9,5 +9,7 @@ python3 -m sglang.launch_server --model-path /nvme01/MiniMax/MiniMax-M2.7 \
     --host 0.0.0.0 \
     --reasoning-parser minimax \
     --port 30003 \
-    --mem-fraction-static 0.85 \
-    --context-length 65536
+    --mem-fraction-static 0.85 
+
+    #--reasoning-parser minimax-append-think 
+
