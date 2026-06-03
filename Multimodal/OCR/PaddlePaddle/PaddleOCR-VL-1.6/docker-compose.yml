@@ -1,0 +1,45 @@
+version: "3.9"
+
+services:
+  paddleocr-vl:
+    image: model.vnet.com/sjhl/vllm-openai:v0.20.2-cu129
+    container_name: paddleocr-vl-1.6-vllm-server
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=7
+    user: "0:0"
+    privileged: true
+    volumes:
+      - /media/llm/PaddlePaddle:/media/llm/PaddlePaddle
+    ipc: host
+    shm_size: "8gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ports:
+      - "30007:8081"
+    # 与 vLLM PaddleOCR-VL 官方部署指南对齐：
+    # https://docs.vllm.ai/projects/recipes/en/latest/PaddlePaddle/PaddleOCR-VL.html#deploying-paddleocr-vl
+    command: >
+      /media/llm/PaddlePaddle/PaddleOCR-VL-1.6
+      --served-model-name PaddleOCR-VL-1.6
+      --trust-remote-code
+      --max-num-batched-tokens 16384
+      --no-enable-prefix-caching
+      --mm-processor-cache-gb 0
+      --host 0.0.0.0
+      --port 8081
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["7"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
