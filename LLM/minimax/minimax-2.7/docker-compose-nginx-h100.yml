@@ -1,0 +1,53 @@
+
+services:
+  nginx-llm-proxy:
+    # 使用 OpenResty 以便用 Lua 在 rewrite 阶段读请求体并写入日志变量（标准 nginx 的 $request_body 在 proxy 场景不生效）
+    image: model.vnet.com/sjhl/openresty:1.27.1.2-0-alpine
+    container_name: nginx-llm-proxy
+    restart: unless-stopped
+    ports:
+      - "30001:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # 让 nginx 容器能访问宿主机上的 sg-deepseekv32
+    user: "0:0"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./conf.d:/etc/nginx/conf.d:ro
+      - ./logs:/var/log/nginx
+    command: ["openresty", "-c", "/etc/nginx/nginx.conf", "-g", "daemon off;"]
+
+  sg-llm:
+    # image: model.vnet.com/sjhl/sglang:v0.5.9
+    image: model.vnet.com/sjhl/sglang:v0.5.12
+    container_name: sg-minimax2.7
+    restart: unless-stopped
+
+    entrypoint: ["/root/start.sh"]
+    environment:
+      CUDA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+      SGLANG_DG_CACHE_DIR: "/root/.cache/minmax2.7_cache"
+      NCCL_DEBUG: "warn"
+    volumes:
+      - ./start-nginx-m2.7.sh:/root/start.sh
+      - /etc/localtime:/etc/localtime
+      - /media/llm:/nvme01
+      - /media/llm/minmax2.7_cache:/root/.cache/minmax2.7_cache
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    network_mode: host
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30003/model_info"]  # 直连本机 SGLang 后端（8000），因使用 network_mode: host
+      interval: 60s   # 每 30 秒检查一次
+      timeout: 5s     # 单次超时 5 秒
+      retries: 3      # 连续 5 次失败后标记为 unhealthy
+      start_period: 900s  # 启动后允许 900 秒的冷启动时间
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
