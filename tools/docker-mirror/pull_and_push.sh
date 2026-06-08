@@ -136,7 +136,7 @@ main() {
     for image in "${images[@]}"; do
         dest="$(to_local_image "$image")" || { failed=1; continue; }
         if is_recorded "$dest"; then
-            echo "跳过: $dest 已在推送记录中 ($RECORD_FILE)"
+            echo "跳过: $image -> $dest （目标镜像已在 $RECORD_FILE 中，非检查前一个镜像）"
             skipped=$((skipped + 1))
             continue
         fi
