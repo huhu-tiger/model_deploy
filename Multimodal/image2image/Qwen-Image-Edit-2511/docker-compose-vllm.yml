@@ -3,7 +3,8 @@ version: "3.9"
 services:
   vllm_qwen_image_edit:
     # 使用已安装 flash-attn 的镜像（提升 attention / 端到端吞吐）
-    image: model.vnet.com/sjhl/vllm-omni:v0.16.0-flashattn
+    # image: model.vnet.com/sjhl/vllm-omni:v0.16.0-flashattn
+    image: model.vnet.com/sjhl/vllm-omni:v0.22.0
     container_name: vllm-qwen-image-edit-2511
     runtime: nvidia
     environment:
@@ -19,12 +20,16 @@ services:
       # 缓存 HF / tokenizer 等，避免每次冷启动重复下载/编译（也便于离线）
       - ./cache:/root/.cache/huggingface
     ipc: host
+    shm_size: "8gb"
     ulimits:
       memlock: -1
       stack: 67108864
     ports:
       - "9121:8091"
+    # v0.22.0 镜像无 vllm serve ENTRYPOINT，需显式指定可执行文件
     command:
+      - vllm
+      - serve
       - --model
       - /media/llm/Qwen/Qwen-Image-Edit-2511
       - --port
@@ -38,24 +43,22 @@ services:
       - Qwen-Image-Edit-2511
       - --gpu-memory-utilization
       - "0.9"
-      # 并发/调度（压测时优先调这两个）
-      # - 吞吐优先：把 max-num-seqs 调大（如 4/6/8），同时观察显存与排队延迟
-      # - 延迟优先：把 max-num-seqs 调小（如 1/2/3），避免拥塞导致尾延迟暴涨
+      # 4 并发：max-num-seqs 与 cudagraph_capture_sizes 对齐；OOM 时降至 2 或降分辨率/steps
       - --max-num-seqs
-      - "2"
-      # 控制一次迭代的“批处理预算”（越大越偏吞吐，越小越偏延迟/稳定）
-      # 注意：该值与输入分辨率强相关，如出现 OOM 或抖动就降低
+      - "4"
       - --max-num-batched-tokens
-      - "4096"
+      - "8192"
       - --trust-remote-code
       # 性能优化：启用 torch.compile + CUDAGraph（vllm serve 的 CompilationConfig）
       # 说明：`--enforce-eager` 会禁用/削弱编译与图捕获，因此这里保持关闭
-      # - --compilation-config
-      # - '{"mode": 3, "cudagraph_capture_sizes": [1, 2, 4]}'
-      # - --enforce-eager
+      - --compilation-config
+      - '{"mode": 3, "cudagraph_capture_sizes": [1, 2, 4]}'
       # 并发排障：给每个响应加 X-Request-Id，方便关联日志/链路追踪
       - --enable-request-id-headers
-      # 性能优化：启用 Cache-DiT（提升推理速度）
+      # 性能优化：Cache-DiT 步间缓存加速（与 layerwise-offload 不可同开）
+      - --cache-backend
+      - cache_dit
+      # 可选细调：--cache-config '{"max_warmup_steps": 4, "residual_diff_threshold": 0.12}'
       - --enable-cache-dit-summary
     restart: unless-stopped
     deploy:
@@ -70,4 +73,4 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 120s

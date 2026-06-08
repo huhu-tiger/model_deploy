@@ -1,25 +1,30 @@
 version: "3.9"
 
-# vLLM 加载 palmfuture GPTQ-Int4 MoE（v0.20.2）
+# vLLM 加载 palmfuture GPTQ-Int4 MoE（v0.22.1）
 # 权重: /media/llm/palmfuture/Qwen3.6-35B-A3B-GPTQ-Int4
 # 不支持 GPTQ Int8 → 请用 SGLang（docker-compose-sglang.yml）
 #
-# 高吞吐档位（4×A800，压测无 OOM 再上调）:
-# ┌─────────┬──────────────┬─────────────────────────┬──────────────────┐
-# │ 档位    │ max-num-seqs │ max-num-batched-tokens  │ gpu-memory-util  │
-# ├─────────┼──────────────┼─────────────────────────┼──────────────────┤
-# │ 保守档  │ 64           │ 8192                    │ 0.85             │
-# │ 当前档  │ 96           │ 32768                   │ 0.90             │
-# │ 激进档  │ 128          │ 32768                   │ 0.90             │
-# └─────────┴──────────────┴─────────────────────────┴──────────────────┘
+# 参数档位（4×A800；openqa 压测 conc48 延迟最低、conc64 RPS 最高）:
+# ┌────────────────┬──────────────┬─────────────────────────┬──────────────────┐
+# │ 档位           │ max-num-seqs │ max-num-batched-tokens  │ gpu-memory-util  │
+# ├────────────────┼──────────────┼─────────────────────────┼──────────────────┤
+# │ 保守档         │ 64           │ 8192                    │ 0.85             │
+# │ 高吞吐档       │ 96           │ 32768                   │ 0.90             │
+# │ 高并发低延迟档 │ 128          │ 16384                   │ 0.90  ← 当前     │
+# └────────────────┴──────────────┴─────────────────────────┴──────────────────┘
 #
-# 纯吞吐压测: 可注释 reasoning-parser / tool-call 相关三行（tools 会走 grammar）
+# 高并发低延迟要点:
+#   * max-num-seqs 128：承接 conc64+ 排队，压测未触顶可再试 160
+#   * batched-tokens 16384：比 32768 更易插队，降低 TTFT / 尾延迟
+#   * async-scheduling + CUDAGraph：decode 稳态延迟更低
+#   * v0.22.1 不支持 Concurrent Partial Prefill，勿设 max-num-partial-prefills>1
+# 纯吞吐压测: 可注释 reasoning-parser / tool-call 三行（grammar 有额外开销）
 # 业务要 32k 上下文: 保持 max-model-len 32768；仅短 prompt 可改为 16384 换并发
 # MoE Int4 在 SGLang(moe_wna16) 上往往比 vLLM 更快，可 A/B 对比
 
 services:
   qwen3-6-35b-a3b-gptq-int4-vllm:
-    image: model.vnet.com/sjhl/vllm-openai:v0.20.2-cu129
+    image: model.vnet.com/sjhl/vllm-openai:v0.22.1
     container_name: Qwen3.6-35B-A3B-GPTQ-Int4-vLLM
     restart: always
     runtime: nvidia
@@ -34,10 +39,14 @@ services:
       --quantization gptq_marlin
       --gpu-memory-utilization 0.90
       --max-model-len 32768
-      --max-num-seqs 96
-      --max-num-batched-tokens 32768
+      --max-num-seqs 128
+      --max-num-batched-tokens 16384
       --enable-chunked-prefill
       --enable-prefix-caching
+      --async-scheduling
+      --compilation-config '{"mode": 3, "cudagraph_capture_sizes": [1, 2, 4, 8, 16, 32, 48, 64]}'
+      --max-cudagraph-capture-size 64
+      --stream-interval 1
       --reasoning-parser qwen3
       --enable-auto-tool-choice
       --tool-call-parser qwen3_coder

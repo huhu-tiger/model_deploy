@@ -29,7 +29,7 @@ echo ""
 
 # 执行压测 - 测试多个并发级别
 evalscope perf \
-  --model deepseek-v3.2 \
+  --model Qwen3.6-35B-A3B \
   --url http://127.0.0.1:30001/v1/chat/completions \
   --extra-args '{"chat_template_kwargs": {"enable_thinking": false}}' \
   --api openai \
