@@ -1,6 +1,6 @@
 # Docker 镜像同步工具
 
-从公网或远程仓库拉取 Docker 镜像，打标签后推送到内网仓库 `model.vnet.com/sjhl`，并记录已成功推送的镜像。
+将公网或远程仓库的 Docker 镜像同步到内网仓库 `model.vnet.com/sjhl`，并记录已成功推送的镜像。
 
 ## 目录结构
 
@@ -12,15 +12,42 @@ tools/docker-mirror/
 └── README.md
 ```
 
+## 同步模式
+
+| 模式 | 说明 | 依赖 | 磁盘占用 |
+|------|------|------|----------|
+| **direct**（默认） | skopeo registry 直传，数据流式转发 | skopeo | 几乎为 0 |
+| **local** | docker pull → tag → push → rmi | Docker 29+ | 需临时存储完整镜像 |
+
+**direct 模式**适合大镜像（vLLM、CUDA 等）；**local 模式**适合需走 Docker daemon 代理、或需在本地验证后再推的场景。
+
 ## 前置条件
 
-- 已安装 Docker，且 `docker` 命令可用
-- 当前环境可访问远程镜像源（如 Docker Hub）
-- 已登录内网仓库 `model.vnet.com`（`docker login model.vnet.com`）
+1. 本机可访问远程镜像源（如 Docker Hub）及内网仓库 `model.vnet.com`
+2. 已登录内网仓库：
+
+```bash
+make login
+# 或
+docker login model.vnet.com
+```
+
+认证信息写入 `~/.docker/config.json`，direct / local 模式均会读取。
+
+**direct 模式额外要求：**
+
+```bash
+sudo apt install skopeo
+```
+
+**local 模式额外要求：**
+
+- 已安装 Docker 29+（含 containerd 2.x）
+- Docker daemon 正常运行
 
 ## 镜像命名规则
 
-脚本会将源镜像映射到内网仓库，规则为：**取镜像路径最后一段作为镜像名，保留原 tag**。
+取源镜像路径**最后一段**作为目标镜像名，保留原 tag：
 
 | 源镜像 | 目标镜像 |
 |--------|----------|
@@ -28,95 +55,180 @@ tools/docker-mirror/
 | `nvidia/cuda:12.0.0-base` | `model.vnet.com/sjhl/cuda:12.0.0-base` |
 | `nginx` | `model.vnet.com/sjhl/nginx:latest` |
 
-等价于手动执行：
+等价命令：
 
 ```bash
+# direct（默认）
+skopeo copy --dest-tls-verify=false \
+  docker://vllm/vllm-openai:v0.22.1 \
+  docker://model.vnet.com/sjhl/vllm-openai:v0.22.1
+
+# local
 docker pull vllm/vllm-openai:v0.22.1
-docker tag vllm/vllm-openai:v0.22.1 model.vnet.com/sjhl/vllm-openai:v0.22.1
+docker tag  vllm/vllm-openai:v0.22.1 model.vnet.com/sjhl/vllm-openai:v0.22.1
 docker push model.vnet.com/sjhl/vllm-openai:v0.22.1
 docker rmi -f model.vnet.com/sjhl/vllm-openai:v0.22.1 vllm/vllm-openai:v0.22.1
 ```
 
-推送成功后会强制删除本地的源镜像与目标镜像标签（`-f`），释放磁盘空间；若镜像被运行中容器占用则仍会删除失败。
-
-## 用法
-
-### Makefile（推荐）
+## 快速开始
 
 ```bash
 cd tools/docker-mirror
 
-# 查看帮助
-make help
-
-# 同步单个镜像
-make push IMAGE=vllm/vllm-openai:v0.22.1
-
-# 同步多个镜像（逗号分隔）
-make push IMAGE=vllm/vllm-omni:v0.22.0,vllm/vllm-openai:v0.22.1
-
-# 同步多个镜像（空格分隔）
-make push IMAGES="vllm/vllm-openai:v0.22.1 nvidia/cuda:12.0.0-base"
+# 同步单个镜像（默认 direct 直传，已内置 SKOPEO_PROXY）
+make push IMAGE=vllm/vllm-openai:v0.22.0
 
 # 查看已推送记录
 make list
+```
 
-# 登录内网仓库
-make login
+## 用法
+
+### Makefile 参数
+
+| 参数 | 说明 | 示例 |
+|------|------|------|
+| `IMAGE` | 单个或多个镜像（逗号分隔） | `IMAGE=vllm/vllm-openai:v0.22.0` |
+| `IMAGES` | 多个镜像（空格分隔） | `IMAGES="img1 img2"` |
+| `MODE` | 同步模式：`direct` / `local` | `MODE=local` |
+| `JOBS` | 并行数 | `JOBS=3` |
+| `PLATFORM` | 目标平台 | `PLATFORM=linux/amd64` |
+| `SRC_PREFIX` | 源镜像站前缀 | `SRC_PREFIX=docker.m.daocloud.io` |
+| `SKOPEO_PROXY` | skopeo 专用 HTTP 代理（默认 `http://172.22.220.21:20171`） | 覆盖默认代理 |
+| `CHECK_REMOTE` | 远程已存在则跳过 | `CHECK_REMOTE=1` |
+
+### 常用示例
+
+```bash
+# 默认 direct 直传（内置代理，无需额外配置）
+make push IMAGE=vllm/vllm-openai:v0.22.0
+
+# 覆盖默认代理
+make push SKOPEO_PROXY=http://other:port IMAGE=vllm/vllm-openai:v0.22.0
+
+# 禁用默认代理（回退到 shell / Docker daemon 代理）
+make push SKOPEO_PROXY= IMAGE=vllm/vllm-openai:v0.22.0
+
+# 使用 Docker Hub 镜像站
+make push SRC_PREFIX=docker.m.daocloud.io IMAGE=vllm/vllm-openai:v0.22.0
+
+# local 模式（走 Docker daemon 代理，会落盘）
+make push MODE=local IMAGE=vllm/vllm-openai:v0.22.0
+
+# 批量 + 并行 + 指定平台
+make push JOBS=2 PLATFORM=linux/amd64 \
+  IMAGE=vllm/vllm-omni:v0.22.0,vllm/vllm-openai:v0.22.1
+
+# 远程已有则跳过
+make push CHECK_REMOTE=1 IMAGE=nvidia/cuda:12.0.0-base
 ```
 
 ### 直接调用脚本
 
 ```bash
-# 进入脚本目录
-cd tools/docker-mirror
+./pull_and_push.sh [选项] <镜像> [<镜像> ...]
 
-# 同步单个镜像
-./pull_and_push.sh vllm/vllm-openai:v0.22.1
+# 选项
+#   --mode direct|local     同步模式（默认 direct）
+#   -j, --jobs N            并行数
+#   -p, --platform PLAT    平台，如 linux/amd64
+#   --src-prefix URL        源镜像站前缀
+#   --check-remote          远程已存在则跳过
+#   -h, --help              帮助
 
-# 同步多个镜像（逗号分隔）
-./pull_and_push.sh vllm/vllm-omni:v0.22.0,vllm/vllm-openai:v0.22.1
-
-# 同步多个镜像（空格分隔）
-./pull_and_push.sh \
-  vllm/vllm-openai:v0.22.1 \
-  nvidia/cuda:12.0.0-base \
-  sglang/sglang:v0.5.12
+./pull_and_push.sh vllm/vllm-openai:v0.22.0
+./pull_and_push.sh -j 2 -p linux/amd64 nvidia/cuda:12.0.0-base
+./pull_and_push.sh --src-prefix docker.m.daocloud.io vllm/vllm-openai:v0.22.0
+./pull_and_push.sh --mode local vllm/vllm-openai:v0.22.0
 ```
 
-也可从项目根目录直接调用：
+从项目根目录：
 
 ```bash
-./tools/docker-mirror/pull_and_push.sh vllm/vllm-openai:v0.22.1
+./tools/docker-mirror/pull_and_push.sh vllm/vllm-openai:v0.22.0
 ```
+
+## 环境变量
+
+| 变量 | 说明 |
+|------|------|
+| `SKOPEO_PROXY` | skopeo 专用 HTTP 代理，默认 `http://172.22.220.21:20171`；设为空字符串可禁用 |
+| `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` | 通用代理 |
+| `SRC_PREFIX` | 同 `--src-prefix` |
+| `DEST_TLS_VERIFY` | 目标仓库 TLS 校验，默认 `false`（内网自签证书） |
+
+代理加载顺序（direct 模式）：
+
+1. `SKOPEO_PROXY`（未设置时使用默认 `http://172.22.220.21:20171`；设为空则跳过）
+2. 当前 shell 的 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`
+3. `/etc/systemd/system/docker.service.d/*.conf` 中 Docker daemon 代理
+
+## 网络与代理
+
+direct 模式（skopeo）是独立进程。脚本**默认**使用 `SKOPEO_PROXY=http://172.22.220.21:20171`，一般无需手动配置。
+
+### 推荐做法
+
+```bash
+# 直接同步（默认代理已内置）
+make push IMAGE=vllm/vllm-openai:v0.22.0
+
+# 使用镜像站（绕过 Docker Hub）
+make push SRC_PREFIX=docker.m.daocloud.io IMAGE=vllm/vllm-openai:v0.22.0
+
+# 改用 local 模式（走 Docker daemon 代理）
+make push MODE=local IMAGE=vllm/vllm-openai:v0.22.0
+
+# 覆盖或禁用默认代理
+make push SKOPEO_PROXY=http://other:port IMAGE=vllm/vllm-openai:v0.22.0
+make push SKOPEO_PROXY= IMAGE=vllm/vllm-openai:v0.22.0
+```
+
+### 常见错误
+
+| 错误 | 原因 | 处理 |
+|------|------|------|
+| `TLS handshake timeout` | 未配置代理，无法访问 Docker Hub | 设置 `SKOPEO_PROXY` 或 `SRC_PREFIX` |
+| `x509: certificate signed by unknown authority` | 内网仓库自签证书 | 脚本默认 `--dest-tls-verify=false`，一般无需处理 |
+| 只打印代理信息后退出 | 旧版脚本 bug | 已修复，请更新脚本后重试 |
+| `connection reset by peer` | 代理不稳定或 Docker Hub 限流 | 换镜像站或重试 |
 
 ## 推送记录
 
-每个镜像推送成功后，目标地址会追加写入 `pushed_images.txt`，每行一条。
-再次同步时会先检查该文件，**按目标镜像地址**判断是否跳过（不检查批次中的前一个镜像），避免重复拉取和推送：
-
-> 例如 `vllm/vllm-openai:v0.22.1` 映射为 `model.vnet.com/sjhl/vllm-openai:v0.22.1`，仅当该目标地址已在记录中时才跳过。
+推送成功后，目标地址追加写入 `pushed_images.txt`（每行一条）。再次同步时按**目标镜像地址**判断是否跳过：
 
 ```
 model.vnet.com/sjhl/vllm-openai:v0.22.1
 model.vnet.com/sjhl/cuda:12.0.0-base
 ```
 
+若记录有误（如推送失败但曾写入），手动删除对应行后重新同步。
+
 ## 错误处理
 
 - 支持空格或逗号分隔多个镜像
-- 推送前检查 `pushed_images.txt`，仅当**当前镜像的目标地址**已存在时跳过（与批次中其他镜像无关）
-- 若记录文件中有误写入（如推送失败但曾写入记录），需手动删除对应行后重新同步
-- 某一步（pull/tag/push）失败时立即停止当前镜像的后续步骤，不会写入推送记录
-- 批量同步时，某个镜像失败不会中断后续镜像的处理
-- 若存在失败项，脚本最终以非零状态码退出，并输出 `部分镜像处理失败`
-- 推送成功但删除本地镜像失败时仅输出警告，不影响推送结果
-- 暂不支持带 digest 的镜像引用（如 `image@sha256:...`）
+- 按目标地址查 `pushed_images.txt` 决定是否跳过，与批次中其他镜像无关
+- 单个镜像失败不中断后续镜像；存在失败项时脚本以非零状态码退出
+- pull/tag/push 或 skopeo copy 失败时不写入记录
+- local 模式推送成功但 `docker rmi` 失败时仅警告，不影响推送结果
+- 暂不支持带 digest 的引用（如 `image@sha256:...`）
+
+## local 模式性能调优
+
+可选 Docker daemon 配置（`/etc/docker/daemon.json`）：
+
+```json
+{
+  "max-concurrent-downloads": 10,
+  "max-concurrent-uploads": 10
+}
+```
+
+修改后执行 `sudo systemctl restart docker`。
 
 ## 查看帮助
 
 ```bash
-./pull_and_push.sh
+make help
+./pull_and_push.sh --help
 ```
-
-不带参数运行时会打印用法说明。
