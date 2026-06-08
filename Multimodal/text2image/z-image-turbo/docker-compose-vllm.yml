@@ -1,12 +1,10 @@
 version: "3.9"
 
 services:
-  vllm_qwen_image:
+  vllm_z_image_turbo:
     image: model.vnet.com/sjhl/vllm-omni:v0.22.0
-    # image: model.vnet.com/sjhl/vllm-omni:v0.22.0
-    # image: model.vnet.com/sjhl/vllm-omni:v0.16.0-flashattn  # 含 flash-attn，attention 吞吐更高
     runtime: nvidia
-    container_name: vllm-qwen-image-2512
+    container_name: vllm-z-image-turbo
     environment:
       - NVIDIA_VISIBLE_DEVICES=6,7
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
@@ -27,7 +25,7 @@ services:
       - vllm
       - serve
       - --model
-      - /media/llm/Qwen/Qwen-Image-2512
+      - /media/llm/Tongyi-MAI/Z-Image-Turbo
       - --omni
       - --host
       - "0.0.0.0"
@@ -44,7 +42,7 @@ services:
       # - 延迟优先：max-num-seqs 调小（如 1/2），避免尾延迟暴涨
       - --max-num-seqs
       - "4"
-      # 批处理预算；1328x1328 分辨率下过大易 OOM，出现抖动时降至 2048
+      # Z-Image-Turbo 1024x1024 峰值显存约 25GB，批处理预算可适当放宽
       - --max-num-batched-tokens
       - "4096"
       - --trust-remote-code
@@ -61,7 +59,7 @@ services:
           devices:
             - driver: nvidia
               capabilities: [gpu]
-              device_ids: ["6", "7"]
+              device_ids: ["6","7"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
