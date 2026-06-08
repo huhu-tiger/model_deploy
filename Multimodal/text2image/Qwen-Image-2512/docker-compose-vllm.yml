@@ -3,6 +3,7 @@ version: "3.9"
 services:
   vllm_qwen_image:
     image: model.vnet.com/sjhl/vllm-omni:v0.18.0
+    #image: model.vnet.com/sjhl/vllm-omni:v0.22.0
     runtime: nvidia
     container_name: vllm-qwen-image-2512
     # environment:
