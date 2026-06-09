@@ -1,0 +1,69 @@
+version: "3.9"
+
+# Qwen3-Omni-30B-A3B-Instruct | 2×A800-80G 高吞吐 + 稳定生产
+# 物理 GPU 2、3（容器内映射为 cuda:0、cuda:1）
+# Stage 0 Thinker → cuda:0；Stage 1 Talker + Stage 2 Code2Wav → cuda:1
+# 镜像内置默认配置：/usr/local/lib/python3.12/dist-packages/vllm_omni/deploy/qwen3_omni_moe.yaml
+# OOM 时依次降 deploy 配置中各 stage 的 max_num_seqs → gpu_memory_utilization
+
+services:
+  vllm-qwen3-omni-30b:
+    image: model.vnet.com/sjhl/vllm-omni:v0.22.0
+    container_name: vllm-qwen3-omni-30b
+    runtime: nvidia
+    shm_size: "16gb"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=2,3
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_DISABLE_REQUIRE=1   # 宿主机驱动 590.44 超出镜像声明的兼容白名单(<=570)，跳过约束检查
+      # 宿主机驱动 590.44，但容器 compat 层为 575.57，ldconfig 优先加载了 compat/libcuda.so.575
+      # 导致内核驱动(590) 与用户态库(575) 版本不匹配 → Error 803
+      # 修复：将真实宿主机驱动路径置于 LD_LIBRARY_PATH 最前，覆盖 compat 层
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64:/usr/local/cuda/lib64
+      - VLLM_IMAGE_FETCH_TIMEOUT=60
+      - VLLM_VIDEO_FETCH_TIMEOUT=120
+      - VLLM_AUDIO_FETCH_TIMEOUT=60
+      - OMP_NUM_THREADS=1
+    volumes:
+      - /media/llm:/media/llm
+      - ./deploy/qwen3_omni_a800.yaml:/deploy/qwen3_omni_a800.yaml:ro
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ports:
+      - "9117:8091"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    command:
+      - vllm
+      - serve
+      - --model
+      - /media/llm/Qwen/Qwen3-Omni-30B-A3B-Instruct
+      - --omni
+      - --deploy-config
+      - /deploy/qwen3_omni_a800.yaml
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8091"
+      - --served-model-name
+      - Qwen3-Omni-30B-A3B-Instruct
+      - --trust-remote-code
+    restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["2", "3"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8091/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
