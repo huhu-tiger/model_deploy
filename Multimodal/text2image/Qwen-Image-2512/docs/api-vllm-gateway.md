@@ -1,5 +1,7 @@
 # Qwen-Image-2512 vLLM 网关 API 说明
 
+> 完整文档见 [api-reference.md](api-reference.md)
+
 ## 服务信息
 
 - **网关地址**: `http://localhost:6003`
@@ -373,7 +375,6 @@ if response.status_code == 200:
 else:
     print(f"错误: {response.text}")
 ```
-```
 
 ## 工作流程
 
@@ -395,7 +396,7 @@ else:
 VLLM_API_URL=http://localhost:9111/v1/images/generations
 
 # 模型名称
-MODEL_NAME=Qwen-Image-2512
+MODEL_NAME=qwen-image
 
 # 临时图像目录
 IMAGE_OUTPUT_DIR=/media/source/model_deploy/Qwen-Image-2512/images_tmp
