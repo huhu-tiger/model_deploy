@@ -1,21 +1,29 @@
 version: "3.9"
 
+# 2×A800-80G 高吞吐 + 稳定生产档（8B 显存余量更大，max-num-seqs 可高于 32B）
+# OOM 时依次降：max-num-seqs → gpu-memory-utilization → max-model-len
+
 services:
   vllm-qwen3-vl-8b:
-    image: model.vnet.com/sjhl/vllm-openai:v0.19.0-cu130
+    image: model.vnet.com/sjhl/vllm-openai:v0.22.1
     container_name: vllm-qwen3-vl-8b
     runtime: nvidia
-    network_mode: host
+    shm_size: "16gb"
     environment:
-      - HTTP_PROXY=
-      - HTTPS_PROXY=
-      - NO_PROXY=localhost,127.0.0.1,.local,.vnet.com
+      - NVIDIA_VISIBLE_DEVICES=1,6
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_DISABLE_REQUIRE=1   # 宿主机驱动超出镜像兼容白名单时跳过约束检查
+      # LD_LIBRARY_PATH 仅用于驱动 590+ 且出现 Error 803（内核 590 / compat libcuda 575 不匹配）的节点。
+      # 本机驱动 570（CUDA 12.8）+ cu130 镜像时勿设，否则会加载旧 libcuda(12080) 导致 PyTorch 报 driver too old。
+      # - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64:/usr/local/cuda/lib64
       - VLLM_IMAGE_FETCH_TIMEOUT=60
       - VLLM_VIDEO_FETCH_TIMEOUT=120
-      - VLLM_AUDIO_FETCH_TIMEOUT=60
+      - OMP_NUM_THREADS=1
     volumes:
       - /media/llm:/media/llm
     ipc: host
+    ports:
+      - "9116:9116"
     logging:
       driver: json-file
       options:
@@ -34,17 +42,21 @@ services:
       - --dtype
       - bfloat16
       - --gpu-memory-utilization
-      - "0.9"
+      - "0.90"
       - --max-model-len
       - "16384"
       - --max-num-seqs
       - "64"
+      - --max-num-batched-tokens
+      - "12288"
+      - --enable-chunked-prefill
+      - --enable-prefix-caching
       - --kv-cache-dtype
       - fp8
       - --mm-encoder-tp-mode
       - data
       - --mm-processor-cache-gb
-      - "2"
+      - "0"
       - --limit-mm-per-prompt.video
       - "0"
       - --limit-mm-per-prompt.image
