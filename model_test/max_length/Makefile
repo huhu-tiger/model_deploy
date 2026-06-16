@@ -14,8 +14,8 @@ DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 RUN_SH := $(DIR)/run.sh
 
 # ── 可覆盖变量 ────────────────────────────────────────────────────────────────
-API_URL      ?= http://127.0.0.1:30003/v1/chat/completions
-MODEL_NAME   ?= Qwen3.6-35B-A3B
+API_URL      ?= http://61.49.53.42:30001/v1/chat/completions
+MODEL_NAME   ?= glm
 API_KEY      ?=
 START_K      ?= 16
 MAX_K        ?= 512

@@ -347,18 +347,23 @@ def probe_output_steps(
 
         if result.ok:
             usage = result.usage or {}
+            completion_tokens = usage.get("completion_tokens", 0)
             row = {
                 "step_k": k,
                 "max_tokens": max_tokens,
                 "prompt_tokens": usage.get("prompt_tokens", 0),
-                "completion_tokens": usage.get("completion_tokens", 0),
+                "completion_tokens": completion_tokens,
                 "elapsed_s": round(result.elapsed_s, 2),
             }
             last_ok = row
+            naturally_stopped = completion_tokens < max_tokens
+            suffix = "  [自然结束，已达模型输出上限]" if naturally_stopped else ""
             print(
                 f"  {format_k(k):>6}  (max_tokens={max_tokens:<7})  OK  "
-                f"completion_tokens={row['completion_tokens']:<7}  elapsed={result.elapsed_s:.1f}s"
+                f"completion_tokens={completion_tokens:<7}  elapsed={result.elapsed_s:.1f}s{suffix}"
             )
+            if naturally_stopped:
+                break
         else:
             fail_at = {"step_k": k, "max_tokens": max_tokens, "status": result.status}
             print(f"  {format_k(k):>6}  (max_tokens={max_tokens:<7})  ", end="")
@@ -437,18 +442,23 @@ def probe_output_with_fixed_input(
         )
         if result.ok:
             usage = result.usage or {}
+            completion_tokens = usage.get("completion_tokens", 0)
             row = {
                 "step_k": k,
                 "max_tokens": max_tokens,
                 "prompt_tokens": usage.get("prompt_tokens", 0),
-                "completion_tokens": usage.get("completion_tokens", 0),
+                "completion_tokens": completion_tokens,
                 "elapsed_s": round(result.elapsed_s, 2),
             }
             last_ok = row
+            naturally_stopped = completion_tokens < max_tokens
+            suffix = "  [自然结束，已达模型输出上限]" if naturally_stopped else ""
             print(
                 f"  {format_k(k):>6}  (max_tokens={max_tokens:<7})  OK  "
-                f"completion_tokens={row['completion_tokens']:<7}  elapsed={result.elapsed_s:.1f}s"
+                f"completion_tokens={completion_tokens:<7}  elapsed={result.elapsed_s:.1f}s{suffix}"
             )
+            if naturally_stopped:
+                break
         else:
             err = parse_api_error(result.error)
             fail_at = {"step_k": k, "max_tokens": max_tokens, "status": result.status,
