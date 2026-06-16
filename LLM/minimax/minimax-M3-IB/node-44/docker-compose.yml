@@ -6,7 +6,7 @@ services:
     container_name: nginx-llm-proxy
     restart: unless-stopped
     ports:
-      - "30001:80"
+      - "30002:80"
     extra_hosts:
       - "host.docker.internal:host-gateway"   # 让 nginx 容器能访问宿主机上的 sg-minimax-m3
     user: "0:0"
@@ -17,23 +17,25 @@ services:
     command: ["openresty", "-c", "/etc/nginx/nginx.conf", "-g", "daemon off;"]
 
   sg-llm:
-    # 双节点 16 卡 bf16 分布式推理（TP=16, EP=16）
+    # 双节点 16 卡 bf16 分布式推理（TP=16，不启用 EP；实测 EP=16 性能不如纯 TP）
+    # workload：输入通常 2000+ tokens（长 prefill），输出含 reasoning 长文本
     # H20 96GB: bf16 权重 ~50GB/卡，mem-fraction 0.78 留足 KV 与 prefill 余量
     # node-44: master（rank 0），暴露 HTTP API
     # node-43: worker（rank 1），纯计算节点
     # 启动顺序：先启动 node-44，再启动 node-43
     image: model.vnet.com/sjhl/sglang:dev-minimax-m3
     container_name: sg-minimax-m3
+    hostname: ${MASTER_HOSTNAME}
     restart: unless-stopped
     command: >
       python3 -m sglang.launch_server
       --model-path /nvme01/MiniMax/MiniMax-M3
       --dtype bfloat16
       --tp-size 16
-      --ep-size 16
       --nnodes 2
-      --nnode-rank 0
-      --dist-init-addr 172.31.0.44:20000
+      --node-rank 0
+      --dist-init-addr ${MASTER_IP}:${MASTER_DIST_PORT}
+      --dist-timeout 3600
       --trust-remote-code
       --host 0.0.0.0
       --port 30003
@@ -42,6 +44,12 @@ services:
       --page-size 128
       --mem-fraction-static 0.78
       --chunked-prefill-size 8192
+      --max-prefill-tokens 16384
+      --enable-mixed-chunk
+      --schedule-policy lpm
+      --max-running-requests 48
+      --max-queued-requests 128
+      --cuda-graph-max-bs 48
       --reasoning-parser auto
       --tool-call-parser auto
     environment:
@@ -65,6 +73,7 @@ services:
       no_proxy: "0.0.0.0,localhost,127.0.0.1"
     volumes:
       - /etc/localtime:/etc/localtime
+      - /etc/hosts:/etc/hosts:ro
       - /media/llm:/nvme01
       - /media/llm/minmax_m3_cache:/root/.cache/minmax_m3_cache
       - /dev/infiniband:/dev/infiniband   # 挂载 IB 设备（uverbs0/3/4/7 等）
