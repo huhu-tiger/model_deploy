@@ -1,0 +1,67 @@
+
+services:
+  sg-llm:
+    # 双节点 16 卡 bf16 分布式推理（TP=16, EP=16）
+    # H20 96GB: bf16 权重 ~50GB/卡，mem-fraction 0.78 留足 KV 与 prefill 余量
+    # node-43: worker（rank 1），纯计算节点，不对外暴露 HTTP API
+    # node-44: master（rank 0），在 node-44 先启动后再启动本节点
+    image: model.vnet.com/sjhl/sglang:dev-minimax-m3
+    container_name: sg-minimax-m3
+    restart: unless-stopped
+    command: >
+      python3 -m sglang.launch_server
+      --model-path /nvme01/MiniMax/MiniMax-M3
+      --dtype bfloat16
+      --tp-size 16
+      --ep-size 16
+      --nnodes 2
+      --nnode-rank 1
+      --dist-init-addr 172.31.0.44:20000
+      --trust-remote-code
+      --host 0.0.0.0
+      --port 30003
+      --attention-backend triton
+      --moe-runner-backend triton
+      --page-size 128
+      --mem-fraction-static 0.78
+      --chunked-prefill-size 8192
+      --reasoning-parser auto
+      --tool-call-parser auto
+    environment:
+      # 本机 8 张 H20 GPU（rank 1 侧 GPU 0-7）
+      CUDA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+      # DeepGEMM / JIT 编译缓存目录
+      SGLANG_DG_CACHE_DIR: "/root/.cache/minmax_m3_cache"
+      # ── NCCL / IB RDMA（数据面：跨节点 AllReduce 等，走 4×400G IB）──
+      NCCL_IB_DISABLE: "0"                              # 0=启用 IB RDMA；1=禁用，回退 TCP
+      NCCL_IB_HCA: "mlx5_0,mlx5_3,mlx5_4,mlx5_7"        # 4 张活跃 ConnectX-7 IB 网卡
+      NCCL_IB_GID_INDEX: "0"                            # 原生 IB 用 0；RoCE(bond0) 才用 3
+      NCCL_IB_QPS_PER_CONNECTION: "4"                   # 每连接 QP 数，与 IB 卡数对齐
+      NCCL_CROSS_NIC: "1"                               # 多 IB 网卡间负载均衡
+      NCCL_MIN_NCHANNELS: "4"                           # 最少通信通道数，匹配 4 张 IB
+      NCCL_IBEXT_DISABLE: "0"                           # 0=开启 NCCL IB 扩展优化
+      # ── 控制面 socket（握手/barrier，走 bond0 → 172.31.0.44:20000）──
+      NCCL_SOCKET_IFNAME: "bond0"                       # NCCL 控制信令网口
+      GLOO_SOCKET_IFNAME: "bond0"                       # PyTorch Gloo 控制面网口
+      NCCL_DEBUG: "WARN"                                # 排查通信问题时改为 INFO
+      NO_PROXY: "0.0.0.0,localhost,127.0.0.1"
+      no_proxy: "0.0.0.0,localhost,127.0.0.1"
+    volumes:
+      - /etc/localtime:/etc/localtime
+      - /media/llm:/nvme01
+      - /media/llm/minmax_m3_cache:/root/.cache/minmax_m3_cache
+      - /dev/infiniband:/dev/infiniband   # 挂载 IB 设备（uverbs0/3/4/7 等）
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    network_mode: host
+    ipc: host
+    shm_size: "32g"
+    privileged: true   # IB uverbs/umad 设备访问需要特权模式
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
