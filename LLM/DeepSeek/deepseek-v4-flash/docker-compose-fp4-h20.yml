@@ -35,10 +35,8 @@ services:
       --moe-runner-backend marlin
       --mem-fraction-static ${SGLANG_MEM_FRACTION_STATIC:-0.85}
       --chunked-prefill-size ${SGLANG_CHUNKED_PREFILL_SIZE:-8192}
-      --cuda-graph-max-bs ${SGLANG_CUDA_GRAPH_MAX_BS:-256}
-      --max-running-requests ${SGLANG_MAX_RUNNING_REQUESTS:-128}
-      --schedule-policy lpm
-      --swa-full-tokens-ratio 0.1
+      --cuda-graph-max-bs ${SGLANG_CUDA_GRAPH_MAX_BS:-320}
+      --max-running-requests ${SGLANG_MAX_RUNNING_REQUESTS:-160}
       --disable-custom-all-reduce
       --enable-metrics
       --tool-call-parser deepseekv4
