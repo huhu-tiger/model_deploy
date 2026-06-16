@@ -22,4 +22,5 @@ python3 -m sglang.launch_server \
 	--chunked-prefill-size 2048 \
 	--log-requests \
 	--log-requests-level 2 \
-	--log-level info
+	--log-level info \
+	--schedule-policy lpm
