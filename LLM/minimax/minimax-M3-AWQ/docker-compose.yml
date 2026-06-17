@@ -1,0 +1,65 @@
+version: "3.9"
+
+# MiniMax-M3-AWQ-INT4 — vLLM（compressed-tensors INT4）
+# ModelScope: https://modelscope.cn/models/cyankiwi/MiniMax-M3-AWQ-INT4
+# HuggingFace:  https://huggingface.co/cyankiwi/MiniMax-M3-AWQ-INT4
+#
+# 权重路径: /media/llm/cyankiwi/MiniMax-M3-AWQ-INT4
+# 镜像（默认方案 A，推荐）:
+#   make build && make up
+# 方案 B（源码编译）:
+#   make build-b && make up-b
+#
+# 要点:
+#   * 必须使用 patched vLLM（Dockerfile 中 toncao/minimax-m3-compressed-tensors）
+#   * --block-size 128 为 MSA 稀疏注意力硬性要求，不可改为 16
+#   * AWQ INT4 约 240GB，8×H100 TP=8 单卡权重 ~30GB，可按需调 max-model-len / gpu-memory-util
+
+services:
+  minimax-m3-awq-int4-vllm:
+    image: ${IMAGE:-model.vnet.com/sjhl/vllm-openai:minimax-m3-awq}
+    container_name: MiniMax-M3-AWQ-INT4-vLLM
+    restart: always
+    runtime: nvidia
+    command: >
+      /media/llm/cyankiwi/MiniMax-M3-AWQ-INT4
+      --served-model-name MiniMax-M3-AWQ-INT4
+      --host 0.0.0.0
+      --port 30001
+      --tensor-parallel-size 8
+      --trust-remote-code
+      --block-size 128
+      --gpu-memory-utilization 0.90
+      --max-model-len 131072
+      --enable-chunked-prefill
+      --enable-prefix-caching
+      --tool-call-parser minimax_m3
+      --reasoning-parser minimax_m3
+      --enable-auto-tool-choice
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+      VLLM_USE_MODELSCOPE: "false"
+      NCCL_DEBUG: "warn"
+    volumes:
+      - /media/llm:/media/llm
+      - /etc/localtime:/etc/localtime
+    ports:
+      - "30001:30001"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 1200s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1', '2', '3', '4', '5', '6', '7']
+              capabilities: [gpu]
