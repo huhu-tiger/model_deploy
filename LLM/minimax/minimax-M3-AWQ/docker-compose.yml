@@ -5,15 +5,17 @@ version: "3.9"
 # HuggingFace:  https://huggingface.co/cyankiwi/MiniMax-M3-AWQ-INT4
 #
 # 权重路径: /media/llm/cyankiwi/MiniMax-M3-AWQ-INT4
-# 镜像（默认方案 A，推荐）:
-#   make build && make up
-# 方案 B（源码编译）:
-#   make build-b && make up-b
+# 镜像: make build && make up
 #
 # 要点:
 #   * 必须使用 patched vLLM（Dockerfile 中 toncao/minimax-m3-compressed-tensors）
 #   * --block-size 128 为 MSA 稀疏注意力硬性要求，不可改为 16
 #   * AWQ INT4 约 240GB，8×H100 TP=8 单卡权重 ~30GB，可按需调 max-model-len / gpu-memory-util
+#
+# 启动提速说明（启动耗时主要来自三阶段）:
+#   1. 权重加载（240GB）: 受磁盘 IO 限制，无法绕过
+#   2. KV cache profiling: 加 --num-gpu-blocks-override <N> 可跳过（N 从日志 "# GPU blocks" 获取）
+#   3. CUDA graph capture: 加 --enforce-eager 可跳过（节省 5~20min，吞吐略降，小并发场景可接受）
 
 services:
   minimax-m3-awq-int4-vllm:
@@ -40,6 +42,8 @@ services:
       NVIDIA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
       VLLM_USE_MODELSCOPE: "false"
       NCCL_DEBUG: "warn"
+      # 跳过 warmup 迭代，节省约 1~2min
+      VLLM_SKIP_WARMUP: "true"
     volumes:
       - /media/llm:/media/llm
       - /etc/localtime:/etc/localtime
