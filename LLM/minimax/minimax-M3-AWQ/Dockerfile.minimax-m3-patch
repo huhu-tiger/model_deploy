@@ -1,0 +1,119 @@
+# MiniMax-M3-AWQ-INT4 — minimax-m3 底座 + 本地 patch（推荐/最稳定）
+# ModelScope: https://modelscope.cn/models/cyankiwi/MiniMax-M3-AWQ-INT4
+#
+# 与 Dockerfile.minimax-m3 的区别:
+#   不在 docker build 时 git clone / git fetch，改为 COPY 预生成的本地 patch 文件。
+#   零网络依赖，构建时间从 ~10min 缩短到 ~1min，完全可离线/内网构建。
+#
+# 前置: 先执行 make patch 生成 minimax-m3-awq.patch（只需一次，patch 随代码提交）
+#
+# 构建:
+#   make patch          # 生成/更新 patch 文件（需要 GitHub 代理）
+#   make build-patch    # docker build，纯本地，零网络
+#   make up-patch       # 构建并启动
+
+ARG BASE_IMAGE=model.vnet.com/sjhl/vllm-openai:minimax-m3
+FROM ${BASE_IMAGE}
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+      apt-get update \
+    && env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+      apt-get install -y --no-install-recommends \
+        patch \
+    && rm -rf /var/lib/apt/lists/*
+
+# 预生成的 patch 文件（由 make patch 生成，提交到仓库）
+COPY minimax-m3-awq.patch /tmp/minimax-m3-awq.patch
+
+# 施加补丁：仅覆盖 toncao 相对 a7fdfeef 的最小改动，保留底座 M3 CUDA 算子。
+# 同时对 AWQ config 的 layer_types 字段做 minimax_m3 适配。
+RUN VLLM_PKG="$(python3 -c 'import vllm, os; print(os.path.dirname(vllm.__file__))')" \
+    && echo "vllm package: ${VLLM_PKG}" \
+    && cd "${VLLM_PKG}" \
+    && patch -p2 --forward < /tmp/minimax-m3-awq.patch \
+    && grep -n "gemm1_alpha" model_executor/layers/fused_moe/oracle/int_wna16.py | head -1 \
+    && ! grep -q "CPUExpertsInt4" model_executor/layers/fused_moe/oracle/int_wna16.py \
+    && python3 - <<PY
+from pathlib import Path
+import os
+
+cfg = Path(os.environ["VLLM_PKG"] if "VLLM_PKG" in os.environ else "${VLLM_PKG}") / "transformers_utils/configs/minimax_m3.py"
+# 在 shell heredoc 中 VLLM_PKG 已展开为字面路径
+cfg = Path("${VLLM_PKG}/transformers_utils/configs/minimax_m3.py")
+text = cfg.read_text()
+needle = "        **kwargs,\n    ):\n        self.vocab_size = vocab_size"
+insert = (
+    "        **kwargs,\n    ):\n"
+    "        _layer_types = kwargs.pop(\"layer_types\", None)\n"
+    "        _mlp_layer_types = kwargs.pop(\"mlp_layer_types\", None)\n"
+    "        self.vocab_size = vocab_size"
+)
+if needle not in text:
+    raise SystemExit("ERROR: minimax_m3.py layout changed; cannot patch layer_types")
+if "_layer_types = kwargs.pop" not in text:
+    text = text.replace(needle, insert, 1)
+super_needle = "        super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)\n\n\nclass MiniMaxM3MTPConfig"
+super_insert = (
+    "        super().__init__(tie_word_embeddings=tie_word_embeddings, **kwargs)\n"
+    "        if _layer_types is not None:\n"
+    "            self.layer_types = _layer_types\n"
+    "        if _mlp_layer_types is not None:\n"
+    "            self.mlp_layer_types = _mlp_layer_types\n\n\n"
+    "class MiniMaxM3MTPConfig"
+)
+if super_needle not in text:
+    raise SystemExit("ERROR: minimax_m3.py super().__init__ anchor missing")
+if "self.layer_types = _layer_types" not in text:
+    text = text.replace(super_needle, super_insert, 1)
+cfg.write_text(text)
+print("minimax_m3.py AWQ layer_types bypass: patched")
+PY
+
+RUN rm -f /tmp/minimax-m3-awq.patch
+
+RUN python3 - <<'PY'
+import os
+import subprocess
+import importlib
+import vllm
+
+print("vllm:", vllm.__version__)
+vllm_pkg = os.path.dirname(vllm.__file__)
+print("vllm path:", vllm_pkg)
+
+stable_so = os.path.join(vllm_pkg, "_C_stable_libtorch.abi3.so")
+if not os.path.isfile(stable_so):
+    raise SystemExit(f"ERROR: missing {stable_so}")
+symbols = subprocess.check_output(["strings", stable_so], text=True, errors="replace")
+if "fused_minimax_m3_qknorm_rope_kv_insert" not in symbols:
+    raise SystemExit("ERROR: M3 fused op missing in _C_stable_libtorch.abi3.so")
+
+importlib.import_module("vllm.engine.arg_utils")
+importlib.import_module(
+    "vllm.model_executor.layers.quantization.compressed_tensors.compressed_tensors_moe"
+)
+
+from pathlib import Path
+int_wna16 = Path(vllm_pkg) / "model_executor/layers/fused_moe/oracle/int_wna16.py"
+text = int_wna16.read_text()
+if "CPUExpertsInt4" in text:
+    raise SystemExit("ERROR: int_wna16 must not reference CPUExpertsInt4 on minimax-m3 base")
+if "gemm1_alpha" not in text:
+    raise SystemExit("ERROR: int_wna16 missing gemm1_alpha patch")
+
+from vllm.transformers_utils.configs.minimax_m3 import MiniMaxM3TextConfig
+MiniMaxM3TextConfig(
+    num_hidden_layers=2,
+    layer_types=["full_attention", "minimax_m3_sparse"],
+)
+print("arg_utils import: OK")
+print("minimax_m3_sparse layer_types: OK")
+print("M3 op symbol: OK")
+print("compressed-tensors patch: OK")
+print("patch-file build: OK")
+PY
+
+ENTRYPOINT ["vllm", "serve"]

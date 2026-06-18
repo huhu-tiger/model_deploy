@@ -5,31 +5,27 @@ SHELL := /bin/bash
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 COMPOSE := docker compose -f $(ROOT)/docker-compose.yml
 
-# ── 官方 README: nvidia/cuda:devel + uv + VLLM_USE_PRECOMPILED ──
-IMAGE_PRECOMPILED ?= model.vnet.com/sjhl/vllm-openai:minimax-m3-awq-precompiled
-DOCKERFILE_PRECOMPILED := $(ROOT)/Dockerfile.precompiled
-CUDA_VERSION ?= 13.0.2
-CUDA_BASE ?= nvidia/cuda:$(CUDA_VERSION)-devel-ubuntu22.04
+# ── 推荐: minimax-m3 底座 + 本地 patch 文件（零网络依赖，~1min）──
+IMAGE_PATCH ?= model.vnet.com/sjhl/vllm-openai:minimax-m3-awq
+DOCKERFILE_PATCH := $(ROOT)/Dockerfile.minimax-m3-patch
+PATCH_FILE := $(ROOT)/minimax-m3-awq.patch
 
-# ── 方案 B: a7fdfeef 补丁分支 + 源码编译 CUDA（慢，约 1～3h）──
-IMAGE_B ?= model.vnet.com/sjhl/vllm-openai:minimax-m3-awq-source
-DOCKERFILE_B := $(ROOT)/Dockerfile
-BASE_IMAGE_B ?= model.vnet.com/sjhl/vllm-openai:v0.23.0
-MAX_JOBS ?= 64
-NVCC_THREADS ?= 4
-
-# ── 方案 A（默认/推荐）: minimax-m3 底座 + git diff 补丁 ──
-IMAGE_A ?= model.vnet.com/sjhl/vllm-openai:minimax-m3-awq
+# ── 备用: minimax-m3 底座 + 构建时 git clone（需 GitHub 代理，~10min）──
+IMAGE_A ?= model.vnet.com/sjhl/vllm-openai:minimax-m3-awq-gitclone
 DOCKERFILE_A := $(ROOT)/Dockerfile.minimax-m3
+
 BASE_IMAGE_A ?= model.vnet.com/sjhl/vllm-openai:minimax-m3
 
-# git clone 代理（仅 Dockerfile 中 git 步骤；pip 仍走阿里云源且禁用代理）
-# 直连 GitHub 时: make build HTTP_PROXY= HTTPS_PROXY=
-HTTP_PROXY ?= http://172.31.0.55:20171
+# toncao 补丁分支及 upstream 基底（用于 make patch 和方案 A）
+PATCH_COMMIT   ?= 8f1350ebf25f188a77022c70b575731f0df6a61a
+UPSTREAM_COMMIT ?= a7fdfeef72323eb3db6f0620e4ea200290d0ca5a
+
+# git clone 代理（仅 make patch 和方案 A 的 git 步骤；pip 仍走阿里云源且禁用代理）
+# 直连 GitHub 时: make patch HTTP_PROXY= HTTPS_PROXY=
+HTTP_PROXY  ?= http://172.31.0.55:20171
 HTTPS_PROXY ?= http://172.31.0.55:20171
 
-# 默认走方案 A
-IMAGE ?= $(IMAGE_A)
+IMAGE ?= $(IMAGE_PATCH)
 
 BUILD_ARGS :=
 ifneq ($(strip $(HTTP_PROXY)),)
@@ -37,75 +33,68 @@ BUILD_ARGS += --build-arg HTTP_PROXY=$(HTTP_PROXY)
 BUILD_ARGS += --build-arg HTTPS_PROXY=$(or $(HTTPS_PROXY),$(HTTP_PROXY))
 endif
 
-.PHONY: help build build-b build-a build-precompiled up up-b up-a up-precompiled \
-        down restart logs ps pull-base-b pull-base-a pull-base-precompiled
+.PHONY: help patch build build-a up up-a down restart logs ps pull-base
 
 help:
 	@echo "MiniMax-M3-AWQ-INT4"
 	@echo ""
-	@echo "方案 A — minimax-m3 底座 + git diff 补丁（默认/推荐，约 5～10min）"
-	@echo "  make build              构建镜像 $(IMAGE_A)"
-	@echo "  make up                 构建并 docker compose up -d"
-	@echo "  make pull-base-a        拉取基础镜像 $(BASE_IMAGE_A)"
+	@echo "推荐方案 — 本地 patch 文件，零网络依赖，构建 ~1min"
+	@echo "  make patch       生成/更新 $(PATCH_FILE)（仅需一次，需 GitHub 代理）"
+	@echo "  make build       构建镜像 $(IMAGE_PATCH)（需先 make patch）"
+	@echo "  make up          构建并 docker compose up -d"
+	@echo "  make pull-base   拉取基础镜像 $(BASE_IMAGE_A)"
 	@echo ""
-	@echo "方案 B — 源码编译（约 1～3h，与 a7fdfeef 严格对齐，网络要求高）"
-	@echo "  make build-b            构建镜像 $(IMAGE_B)"
-	@echo "  make up-b               构建并启动"
-	@echo "  make pull-base-b        拉取基础镜像 $(BASE_IMAGE_B)"
-	@echo ""
-	@echo "官方 README — nvidia/cuda:devel + uv 预编译（可能缺 M3 算子）"
-	@echo "  make build-precompiled  构建镜像 $(IMAGE_PRECOMPILED)"
-	@echo "  make up-precompiled     构建并启动"
-	@echo "  make pull-base-precompiled  拉取 $(CUDA_BASE)"
+	@echo "备用方案 — 构建时 git clone（需 GitHub 代理，~10min）"
+	@echo "  make build-a     构建镜像 $(IMAGE_A)"
+	@echo "  make up-a        构建并启动"
 	@echo ""
 	@echo "运维: make down | restart | logs | ps"
 	@echo ""
 	@echo "可调变量:"
-	@echo "  BASE_IMAGE_B=$(BASE_IMAGE_B)"
 	@echo "  BASE_IMAGE_A=$(BASE_IMAGE_A)"
-	@echo "  CUDA_BASE=$(CUDA_BASE)"
-	@echo "  IMAGE_PRECOMPILED=$(IMAGE_PRECOMPILED)"
-	@echo "  MAX_JOBS=$(MAX_JOBS)              # 方案 B 源码编译并行度，make build-b MAX_JOBS=32 可覆盖"
-	@echo "  NVCC_THREADS=$(NVCC_THREADS)      # 方案 B nvcc 线程数，make build-b NVCC_THREADS=2 可覆盖"
-	@echo "  HTTP_PROXY=$(HTTP_PROXY)   # 仅 git clone；禁用: make build HTTP_PROXY="
+	@echo "  PATCH_COMMIT=$(PATCH_COMMIT)"
+	@echo "  UPSTREAM_COMMIT=$(UPSTREAM_COMMIT)"
+	@echo "  HTTP_PROXY=$(HTTP_PROXY)   # 仅 git 步骤；禁用: HTTP_PROXY="
 	@echo "  HTTPS_PROXY=$(HTTPS_PROXY)"
 
-build build-a:
+# 一次性生成 patch 文件（克隆 toncao/vllm 到临时目录，提取 diff，删除克隆）
+patch:
+	@echo ">>> 生成 $(PATCH_FILE) ..."
+	@tmpdir=$$(mktemp -d) && \
+	  trap 'rm -rf "$$tmpdir"' EXIT && \
+	  if [ -n "$(HTTP_PROXY)" ]; then \
+	    export HTTP_PROXY="$(HTTP_PROXY)" HTTPS_PROXY="$(HTTPS_PROXY)" \
+	           http_proxy="$(HTTP_PROXY)" https_proxy="$(HTTPS_PROXY)"; \
+	  fi && \
+	  git clone https://github.com/toncao/vllm.git "$$tmpdir/vllm" && \
+	  cd "$$tmpdir/vllm" && \
+	  git remote add upstream https://github.com/vllm-project/vllm.git && \
+	  git fetch upstream "$(UPSTREAM_COMMIT)" && \
+	  git checkout minimax-m3-compressed-tensors && \
+	  git checkout "$(PATCH_COMMIT)" && \
+	  git diff "$(UPSTREAM_COMMIT)" HEAD > "$(PATCH_FILE)" && \
+	  echo ">>> patch saved: $(PATCH_FILE) ($$(wc -l < "$(PATCH_FILE)") lines)"
+
+# 推荐: COPY 本地 patch，零网络
+build:
+	@test -f "$(PATCH_FILE)" || { echo "ERROR: $(PATCH_FILE) not found. Run: make patch"; exit 1; }
+	docker build -t $(IMAGE_PATCH) \
+	  --build-arg BASE_IMAGE=$(BASE_IMAGE_A) \
+	  -f $(DOCKERFILE_PATCH) $(ROOT)
+
+# 备用: 构建时 git clone
+build-a:
 	docker build -t $(IMAGE_A) $(BUILD_ARGS) \
 	  --build-arg BASE_IMAGE=$(BASE_IMAGE_A) \
 	  -f $(DOCKERFILE_A) $(ROOT)
 
-build-b:
-	docker build -t $(IMAGE_B) $(BUILD_ARGS) \
-	  --build-arg BASE_IMAGE=$(BASE_IMAGE_B) \
-	  --build-arg MAX_JOBS=$(MAX_JOBS) \
-	  --build-arg NVCC_THREADS=$(NVCC_THREADS) \
-	  -f $(DOCKERFILE_B) $(ROOT)
+up: build
+	IMAGE=$(IMAGE_PATCH) $(COMPOSE) up -d
 
-build-precompiled:
-	docker build -t $(IMAGE_PRECOMPILED) $(BUILD_ARGS) \
-	  --build-arg BASE_IMAGE=$(CUDA_BASE) \
-	  --build-arg CUDA_VERSION=$(CUDA_VERSION) \
-	  --build-arg MAX_JOBS=$(MAX_JOBS) \
-	  --build-arg NVCC_THREADS=$(NVCC_THREADS) \
-	  -f $(DOCKERFILE_PRECOMPILED) $(ROOT)
-
-up-precompiled: build-precompiled
-	IMAGE=$(IMAGE_PRECOMPILED) $(COMPOSE) up -d
-
-up up-a: build-a
+up-a: build-a
 	IMAGE=$(IMAGE_A) $(COMPOSE) up -d
 
-up-b: build-b
-	IMAGE=$(IMAGE_B) $(COMPOSE) up -d
-
-pull-base-precompiled:
-	docker pull $(CUDA_BASE)
-
-pull-base-b:
-	docker pull $(BASE_IMAGE_B)
-
-pull-base-a:
+pull-base:
 	docker pull $(BASE_IMAGE_A)
 
 down:
