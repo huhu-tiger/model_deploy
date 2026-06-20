@@ -1,0 +1,65 @@
+version: "3.9"
+
+# GLM-5.2-AWQ-INT4 — vLLM（compressed-tensors INT4）
+# ModelScope: https://modelscope.cn/models/cyankiwi/GLM-5.2-AWQ-INT4
+#
+# 权重路径: /media/llm/cyankiwi/GLM-5.2-AWQ-INT4
+# 镜像: docker pull model.vnet.com/sjhl/vllm-openai:glm52
+#
+# 启动提速说明（启动耗时主要来自三阶段）:
+#   1. 权重加载: 受磁盘 IO 限制，无法绕过
+#   2. KV cache profiling: 加 --num-gpu-blocks-override <N> 可跳过（N 从日志 "# GPU blocks" 获取）
+#   3. CUDA graph capture: 加 --enforce-eager 可跳过（节省 5~20min，吞吐略降，小并发场景可接受）
+
+services:
+  glm-5.2-awq-int4-vllm:
+    image: ${IMAGE:-model.vnet.com/sjhl/vllm-openai:glm52}
+    container_name: GLM-5.2-AWQ-INT4-vLLM
+    restart: always
+    runtime: nvidia
+    command: >
+      /media/llm/cyankiwi/GLM-5.2-AWQ-INT4
+      --served-model-name glm-5.2
+      --host 0.0.0.0
+      --port 30001
+      --tensor-parallel-size 8
+      --trust-remote-code
+      --gpu-memory-utilization 0.90
+      --max-model-len 131072
+      --kv-cache-dtype fp8
+      --max-num-seqs 64
+      --enable-chunked-prefill
+      --enable-prefix-caching
+      --tool-call-parser glm47
+      --reasoning-parser glm45
+      --enable-auto-tool-choice
+      --override-generation-config '{"speculative_config": null}'
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+      VLLM_USE_MODELSCOPE: "false"
+      NCCL_DEBUG: "warn"
+      # DeepGEMM JIT 预热跳过（GLM-5.2 系列使用 DeepGEMM 内核，首次请求时按需编译）
+      VLLM_DEEP_GEMM_WARMUP: "skip"
+    volumes:
+      - /media/llm:/media/llm
+      - /etc/localtime:/etc/localtime
+    ports:
+      - "30001:30001"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 1200s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1', '2', '3', '4', '5', '6', '7']
+              capabilities: [gpu]
