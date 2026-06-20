@@ -1,0 +1,141 @@
+version: "3.9"
+
+# GLM-5.2 AWQ 量化任务 Docker Compose（H100 × 8）
+#
+# ⚠️  注意：GLM-5.2 全量 BF16 约 1.5 TB（282 个 shard），
+#    请确认 /media/llm/ZhipuAI/GLM-5.2 已完整下载后再运行。
+#
+# llmcompressor AWQ + sequential CPU offload
+#   镜像 model.vnet.com/sjhl/vllm-openai:v0.23.0-llmcompressor（已内置 llmcompressor）
+#   服务器 CPU RAM ~1 TB，oneshot 逐层从 CPU 搬到 GPU，无需一次加载全部权重
+#
+# 运行命令:
+#   模式 A（单卡，稳定）：
+#     docker compose -f docker-compose-quantize.yml run --rm quant-llmcompressor
+#   模式 B（8 卡，更快）：
+#     docker compose -f docker-compose-quantize.yml run --rm quant-llmcompressor-multi
+#
+# 输出路径:
+#   /media/llm/ZhipuAI/GLM-5.2-AWQ-4bit-LC
+
+x-common: &common
+  runtime: nvidia
+  ipc: host
+  shm_size: "64g"
+  ulimits:
+    memlock: -1
+    stack: 67108864
+  environment:
+    # ── GPU 卡号配置 ──────────────────────────────────────────────
+    # llmcompressor sequential pipeline 只使用 cuda:0（第一张可见卡）。
+    # AWQ 量化瓶颈在 CPU offload I/O，多卡无法加速，建议只映射显存最大的单卡。
+    # 如需更换卡号，同步修改下方 deploy.resources.device_ids。
+    NVIDIA_VISIBLE_DEVICES: "0"
+    # ─────────────────────────────────────────────────────────
+    # ── 缓存路径（全部挂载到宿主机，重启容器直接复用）──────────────
+    # HF_HOME 覆盖 HF_HUB_CACHE 和 HF_MODULES_CACHE（tokenizer/模型config/远程代码）
+    HF_HOME: "/media/llm/.cache/huggingface"
+    # HF_DATASETS_CACHE 独立挂载，与校准数据集专用目录对应
+    HF_DATASETS_CACHE: "/media/quantize/datasets"
+    # TORCH_HOME：PyTorch Hub 缓存（kernel/extension 下载）
+    TORCH_HOME: "/media/quantize/torch"
+    TRANSFORMERS_OFFLINE: "1"
+  volumes:
+    - /media/llm:/media/llm
+    - /media/quantize/datasets:/media/quantize/datasets
+    - /media/quantize/torch:/media/quantize/torch
+    - /etc/localtime:/etc/localtime
+    - ./:/workspace/quantize
+  working_dir: /workspace/quantize
+
+services:
+
+  # ─────────────────────────────────────────────────────────────────
+  # 模式 A：单卡 sequential offload（稳定，适合显存少）
+  #   - 逐层 CPU RAM → GPU → CPU，仅用 1 张卡
+  #   - H100 80GB，瓶颈：PCIe 带宽，预计 4~12 小时
+  # ─────────────────────────────────────────────────────────────────
+  quant-llmcompressor:
+    <<: *common
+    image: model.vnet.com/sjhl/vllm-openai:v0.23.0-llmcompressor
+    container_name: GLM-5.2-H100-quant-llmcompressor
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        OUTPUT=/media/llm/ZhipuAI/GLM-5.2-AWQ-4bit-LC
+        echo "=== 清空输出目录: $$OUTPUT ==="
+        rm -rf "$$OUTPUT" && mkdir -p "$$OUTPUT"
+        mkdir -p /media/quantize/datasets /media/quantize/torch
+        echo '=== 设置 HuggingFace 代理（下载校准数据集）==='
+        export HTTP_PROXY=http://172.31.0.55:20171
+        export HTTPS_PROXY=http://172.31.0.55:20171
+        export http_proxy=http://172.31.0.55:20171
+        export https_proxy=http://172.31.0.55:20171
+        export NO_PROXY=localhost,127.0.0.1,172.31.0.0/16,model.vnet.com
+        export no_proxy=localhost,127.0.0.1,172.31.0.0/16,model.vnet.com
+        echo '=== 开始 AWQ 量化（单卡 sequential offload）==='
+        python3 quantize_llmcompressor.py \
+          --model-path /media/llm/ZhipuAI/GLM-5.2 \
+          --output-path "$$OUTPUT" \
+          --gpus 0 \
+          --calib-dataset cyankiwi/calibration \
+          --calib-samples 384 \
+          --max-seq-length 2048 \
+          --scheme W4A16_ASYM \
+          --offload-device cpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0']
+              capabilities: [gpu]
+
+  # ─────────────────────────────────────────────────────────────────
+  # 模式 B：8 卡 device_map + CPU offload（更快，推荐优先尝试）
+  #   - 8 × H100 80GB = 640 GB 常驻 GPU，~860 GB offload CPU
+  #   - 校准前向传播同时使用所有 8 张卡，预计 2~6 小时
+  #   - 若 OOM 或异常，回退使用 quant-llmcompressor（模式 A）
+  # ─────────────────────────────────────────────────────────────────
+  quant-llmcompressor-multi:
+    <<: *common
+    image: model.vnet.com/sjhl/vllm-openai:v0.23.0-llmcompressor
+    container_name: GLM-5.2-H100-quant-llmcompressor-multi
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        OUTPUT=/media/llm/ZhipuAI/GLM-5.2-AWQ-4bit-LC
+        echo "=== 清空输出目录: $$OUTPUT ==="
+        rm -rf "$$OUTPUT" && mkdir -p "$$OUTPUT"
+        mkdir -p /media/quantize/datasets /media/quantize/torch
+        echo '=== 设置 HuggingFace 代理（下载校准数据集）==='
+        export HTTP_PROXY=http://172.31.0.55:20171
+        export HTTPS_PROXY=http://172.31.0.55:20171
+        export http_proxy=http://172.31.0.55:20171
+        export https_proxy=http://172.31.0.55:20171
+        export NO_PROXY=localhost,127.0.0.1,172.31.0.0/16,model.vnet.com
+        export no_proxy=localhost,127.0.0.1,172.31.0.0/16,model.vnet.com
+        echo '=== 开始 AWQ 量化（8 卡 device_map + CPU offload）==='
+        python3 quantize_llmcompressor.py \
+          --model-path /media/llm/ZhipuAI/GLM-5.2 \
+          --output-path "$$OUTPUT" \
+          --gpus 0,1,2,3,4,5,6,7 \
+          --multi-gpu \
+          --cpu-memory 860GiB \
+          --calib-dataset cyankiwi/calibration \
+          --calib-samples 384 \
+          --max-seq-length 2048 \
+          --scheme W4A16_ASYM
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1', '2', '3', '4', '5', '6', '7']
+              capabilities: [gpu]

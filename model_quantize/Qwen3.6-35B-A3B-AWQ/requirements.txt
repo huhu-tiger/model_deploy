@@ -1,0 +1,19 @@
+# Qwen3.6-35B-A3B AWQ 量化依赖（llmcompressor 方案）
+#
+# 运行环境（Docker 镜像 model.vnet.com/sjhl/vllm-openai:v0.22.1 内置）:
+#   Python     : 3.12.13
+#   torch      : 2.11.0+cu130（已预装，不重复安装）
+#   transformers: 5.10.2（已预装）
+#   safetensors: 0.7.0（已预装）
+#
+# 安装命令（在容器内执行，使用清华镜像源）：
+#   pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple/
+
+# llmcompressor 会自动拉取 compressed-tensors 等核心依赖
+llmcompressor>=0.12.0
+
+# 校准数据集加载
+datasets>=2.18.0
+
+# accelerate 用于多卡 device_map="auto" 模型加载
+accelerate>=1.0.0

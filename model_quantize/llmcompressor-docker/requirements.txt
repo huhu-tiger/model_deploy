@@ -1,0 +1,19 @@
+# llmcompressor AWQ 量化环境依赖
+#
+# 基础镜像 model.vnet.com/sjhl/vllm-openai:v0.23.0 已预装（不重复安装）:
+#   torch              2.11.0+cu130
+#   transformers       5.12.0
+#   safetensors        0.8.0
+#   compressed-tensors 0.17.0  (vllm 依赖)
+#
+# 注意: llmcompressor 0.12.0 会将 compressed-tensors 升至 0.17.1（patch 差异）
+#       量化阶段不调用 vllm 推理服务，不影响功能。
+
+# AWQ/GPTQ 量化框架
+llmcompressor==0.12.0
+
+# 校准数据集加载
+datasets==5.0.0
+
+# CPU offload / 多卡支持（sequential_offload_device）
+accelerate==1.13.0
