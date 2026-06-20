@@ -1,0 +1,46 @@
+version: "3.9"
+services:
+  ornith-1-0-35b:
+    image: model.vnet.com/sjhl/sglang:v0.5.13.post1
+    container_name: Ornith-1.0-35B
+    restart: always
+    command: >
+      sglang serve
+      --model-path /media/llm/deepreinforce-ai/Ornith-1.0-35B
+      --port 30001
+      --enable-metrics
+      --host 0.0.0.0
+      --tp 4
+      --ep 2
+      --context-length 262144 
+      --reasoning-parser qwen3
+      --tool-call-parser qwen3_coder
+      --mem-fraction-static 0.8
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "2,3,5,6"
+      SGLANG_DG_CACHE_DIR: "/root/.cache/ornith-1-0-35b_cache"
+      TZ: "Asia/Shanghai"
+    volumes:
+      - /media/llm:/media/llm
+      - /media/llm/ornith-1-0-35b_cache:/root/.cache/ornith-1-0-35b_cache
+      - /etc/localtime:/etc/localtime:ro
+      - /usr/share/zoneinfo/Asia/Shanghai:/etc/timezone:ro
+    ports:
+      - "30001:30001"
+    ulimits:
+      memlock: -1
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 600s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['2', '3', '5', '6']
+              capabilities: [gpu]
