@@ -15,20 +15,41 @@
 
 - **算法**：AWQ（Activation-aware Weight Quantization），使用校准数据
 - **格式**：W4A16 非对称，group_size=128
-- **校准集**：`cyankiwi/calibration`，384 条样本，max_seq_length=2048
+- **校准集**：`cyankiwi/calibration`（256 条）+ `HuggingFaceH4/ultrachat_200k`（256 条），共 512 条，max_seq_length=2048
 - **镜像**：`model.vnet.com/sjhl/vllm-openai:v0.23.0-llmcompressor`（已内置 llmcompressor 0.12.0）
 - **压缩**：~1.5 TB → ~375~450 GB（约 25~30%）
 - **输出**：`/media/llm/ZhipuAI/GLM-5.2-AWQ-4bit-LC`
 
-### 两种运行模式
+## 运行模式说明
 
-| | 模式 A（单卡） | 模式 B（8 卡，推荐） |
-|---|---|---|
-| GPU 使用 | 1 × H100 80GB | 8 × H100 80GB = **640 GB** |
-| 加载方式 | sequential offload，逐层 CPU→GPU→CPU | device_map="auto"，640 GB 常驻 GPU |
-| CPU offload | ~1.5 TB 全部 | ~860 GB（剩余部分） |
-| 预计耗时 | 4~12 小时 | **2~6 小时** |
-| 稳定性 | ✅ 成熟 | ⚠️ MoE 专家覆盖需验证 |
+### 模式 A：单卡 sequential offload（**当前实际使用**）
+
+| 项目 | 说明 |
+|---|---|
+| GPU 使用 | 1 × H100 80GB |
+| 加载方式 | sequential offload，逐层 CPU→GPU→CPU |
+| CPU offload | ~1.5 TB 全部常驻 CPU RAM |
+| 预计耗时 | 4~12 小时 |
+| 稳定性 | ✅ 成熟，推荐使用 |
+
+### 模式 B：8 卡 device_map（**当前不可用**）
+
+模式 B 在 transformers 5.10.1 + GLM-5.2 组合下存在结构性不兼容：
+
+**根本原因**：GLM-5.2 的 checkpoint 将 MoE 专家的 `gate_proj` 和 `up_proj` 分开存储，
+而模型架构期望 `gate_up_proj`（合并张量）。transformers 加载时需执行 `MergeModulelist`
+转换，合并峰值约 36 GiB/层（256 专家），远超每卡剩余 25 GiB 的空闲空间，导致
+1202 个参数停留在 `meta` 设备，无法参与 AWQ 前向传播。
+
+即使将显存利用率降到 45%（每卡 36 GiB → 剩余 44 GiB），合并虽可通过，但模型 80%
+的层（~63 层）将在 CPU 上计算，速度比模式 A sequential offload 还慢 2~5 倍。
+
+**结论**：在 8 × H100 80GiB 上，量化 1.5 TB 的 GLM-5.2 MoE 模型应使用模式 A。
+
+### 自动回退机制
+
+脚本运行时会优先尝试模式 B；若检测到 `meta` 参数（加载失败标志），将自动释放
+GPU 缓存并切换到模式 A，量化结果与直接运行模式 A 完全相同。
 
 ## 文件说明
 
@@ -36,12 +57,34 @@
 Glm-5.2-AWQ-H100/
 ├── docker-compose-quantize.yml   # 量化任务编排（含模式 A、B）
 ├── quantize_llmcompressor.py     # AWQ 量化脚本
+├── logs/                         # 量化运行日志（自动创建）
 ├── eval_ppl.py                   # 量化精度验证（Perplexity）
 └── README.md
 ```
 
 > 依赖已内置于镜像，无需单独安装。校准数据集首次运行通过代理下载，
 > 缓存至宿主机 `/media/quantize/datasets`，后续复用。
+
+## 日志与缓存路径
+
+| 用途 | 路径 |
+|---|---|
+| 量化运行日志 | `./logs/`（脚本同目录，自动挂载到宿主机） |
+| 校准数据集缓存 | `/media/quantize/datasets/` |
+| PyTorch 缓存 | `/media/quantize/torch/` |
+
+日志文件名格式：`YYYYMMDD_HHMMSS_<模型名>_mode_<a|b>.log`
+
+```bash
+# 查看最新日志
+ls -lt logs/
+
+# 实时跟踪当前运行（模式 A）
+tail -f logs/*_GLM-5.2_mode_b.log
+
+# 搜索量化进度或错误
+grep -E "AWQ 量化完成|模式切换|Traceback|ERROR" logs/*.log
+```
 
 ## 前置条件
 
@@ -65,12 +108,24 @@ docker images model.vnet.com/sjhl/vllm-openai:v0.23.0-llmcompressor
 ```bash
 cd /media/source/model_deploy/model_quantize/Glm-5.2-AWQ-H100
 
-# 模式 B（8 卡，推荐优先尝试）
+# 推荐：脚本自动尝试模式 B，检测到不可用后回退到模式 A
 docker compose -f docker-compose-quantize.yml run --rm quant-llmcompressor-multi
 
-# 模式 A（单卡，稳定回退）
+# 直接运行模式 A（跳过模式 B 尝试，更快开始）
 docker compose -f docker-compose-quantize.yml run --rm quant-llmcompressor
 ```
+
+### 关键参数说明
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--gpu-memory-utilization` | `0.70` | 模式 B 每卡显存比例，OOM 时可降低 |
+| `--cpu-memory` | `auto` | CPU offload 容量，自动取可用内存 × 80% |
+| `--calib-dataset` | `cyankiwi/calibration,HuggingFaceH4/ultrachat_200k` | 逗号分隔多集 |
+| `--calib-samples` | `256,256` | 各数据集采样数 |
+| `--max-seq-length` | `2048` | 校准序列最大长度 |
+| `--no-fallback-to-mode-a` | 未设置 | 禁用自动回退（调试用） |
+| `--log-dir` | `./logs/` | 日志目录 |
 
 ## 精度验证
 
