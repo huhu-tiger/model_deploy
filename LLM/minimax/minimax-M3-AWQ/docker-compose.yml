@@ -25,7 +25,7 @@ services:
     runtime: nvidia
     command: >
       /media/llm/cyankiwi/MiniMax-M3-AWQ-INT4
-      --served-model-name MiniMax-M3-AWQ-INT4
+      --served-model-name WanWu/MiniMax-M3
       --host 0.0.0.0
       --port 30001
       --tensor-parallel-size 8
