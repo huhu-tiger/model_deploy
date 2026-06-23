@@ -18,21 +18,23 @@ services:
       /media/llm/QuantTrio/GLM-5.2-Int4-Int8Mix/
       --host 0.0.0.0
       --port 30001
-      --served-model-name GLM-5.2
+      --served-model-name WanWu/GLM-5.2
       --trust-remote-code
       --dtype bfloat16
       --quantization compressed-tensors
       --kv-cache-dtype fp8
       --tensor-parallel-size 8
       --enable-expert-parallel
-      --max-model-len 65536
+      --max-model-len 131072
       --gpu-memory-utilization 0.90
-      --max-num-seqs 32
+      --max-num-seqs 64
       --enable-auto-tool-choice
       --tool-call-parser glm47
       --reasoning-parser glm45
       --speculative-config.method mtp 
       --speculative-config.num_speculative_tokens 1 
+      --enable-chunked-prefill
+      --enable-prefix-caching
       --disable-uvicorn-access-log
     environment:
       NVIDIA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
@@ -49,7 +51,7 @@ services:
     ipc: host
     shm_size: "32g"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:30002/health"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
       interval: 300s
       timeout: 10s
       retries: 3
