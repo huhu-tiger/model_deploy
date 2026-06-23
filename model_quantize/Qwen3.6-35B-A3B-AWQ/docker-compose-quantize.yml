@@ -1,110 +1,107 @@
-version: "3.9"
-
 # Qwen3.6-35B-A3B AWQ 量化任务 Docker Compose
 #
-# 方案一（推荐首选）: RTN 无校准数据量化 —— 复现 QuantTrio 方案，单卡/低资源
-#   docker compose -f docker-compose-quantize.yml run --rm quant-rtn
+# 镜像: model.vnet.com/sjhl/vllm-openai:v0.23.0-llmcompressor
+#   - 已预装 llmcompressor==0.12.0 / datasets==5.0.0 / accelerate==1.13.0
+#   - 构建脚本: ../llmcompressor-docker/build.sh
 #
-# 方案二（精度最高）: llmcompressor W4A16_ASYM —— 复现 cyankiwi 方案，需多卡+校准数据
+# 方案: llmcompressor W4A16_ASYM AWQ + 单卡 sequential offload
 #   docker compose -f docker-compose-quantize.yml run --rm quant-llmcompressor
 #
-# 输出路径:
-#   quant-rtn          → /media/llm/Qwen/Qwen3.6-35B-A3B-AWQ-4bit-RTN
-#   quant-llmcompressor → /media/llm/Qwen/Qwen3.6-35B-A3B-AWQ-4bit-LC
-
-x-common: &common
-  runtime: nvidia
-  ipc: host
-  shm_size: "64g"
-  ulimits:
-    memlock: -1
-    stack: 67108864
-  environment:
-    # ── GPU 卡号配置（各 service 的 deploy.device_ids 须同步修改）──
-    NVIDIA_VISIBLE_DEVICES: "2,3,4,5"
-    # ─────────────────────────────────────────────────────────
-    HF_HOME: "/media/llm/.cache/huggingface"
-    HF_ENDPOINT: "https://huggingface.co"
-    TRANSFORMERS_OFFLINE: "0"
-  volumes:
-    - /media/llm:/media/llm
-    - /etc/localtime:/etc/localtime
-    - ./:/workspace/quantize
-  working_dir: /workspace/quantize
+# 切换校准集（详见 ../docs/dataset.md）:
+#   CALIB_DATASET=ultrachat CALIB_SAMPLES=512 \
+#     docker compose -f docker-compose-quantize.yml run --rm quant-llmcompressor
+#
+# ⚠️ GPU 配置说明
+# ─────────────────────────────────────────────────────────────────
+# Qwen3.6-35B-A3B 是 256 个专家的大 MoE 模型,llmcompressor 0.12.0 在
+# multi-gpu device_map 模式下,AWQ 的 cache_parent_kwargs_hook 会在每张
+# 卡上独立累积,256 expert × 40 层 × 512 samples 必 OOM。
+#
+# 因此本配置默认**只挂载 1 张 GPU**,走 llmcompressor 官方推荐的单卡
+# sequential offload 路径:
+#   - 模型常驻 CPU RAM(~70 GB)
+#   - 逐层 / 逐 expert 流式加载到 cuda:0,做完立刻释放
+#   - 显存占用稳定(~30-50 GB),不会 OOM
+#   - 代价是速度慢(4~8 小时),其他卡空闲
+#
+# 想换其他物理卡:同时修改 NVIDIA_VISIBLE_DEVICES 和 device_ids
+# 例如改用物理卡 5:
+#   NVIDIA_VISIBLE_DEVICES: "5"
+#   device_ids: ['5']
+# 容器内逻辑编号始终是 "0",python 脚本传 --gpus 0,无需改动。
+# ─────────────────────────────────────────────────────────────────
+#
+# 输出路径: /media/llm/Qwen/Qwen3.6-35B-A3B-AWQ-4bit
 
 services:
 
   # ─────────────────────────────────────────────────────────────
-  # 方案一: RTN 无校准数据量化（推荐首选）
-  #   复现 QuantTrio/Qwen3.6-35B-A3B-AWQ，单卡即可，约 30 分钟
-  # ─────────────────────────────────────────────────────────────
-  quant-rtn:
-    <<: *common
-    image: model.vnet.com/sjhl/vllm-openai:v0.23.0
-    container_name: Qwen3.6-35B-A3B-quant-rtn
-    entrypoint:
-      - bash
-      - -c
-      - |
-        set -e
-        OUTPUT=/media/llm/Qwen/Qwen3.6-35B-A3B-AWQ-4bit-RTN
-        echo "=== 清空输出目录: $$OUTPUT ==="
-        rm -rf "$$OUTPUT" && mkdir -p "$$OUTPUT"
-        echo '=== 安装依赖（清华镜像源）==='
-        pip install safetensors tqdm -i https://pypi.tuna.tsinghua.edu.cn/simple/ -q
-        echo '=== 开始 RTN 量化（4卡并行: 0,1,2,3）==='
-        python3 quantize_rtn.py \
-          --model-path /media/llm/Qwen/Qwen3.6-35B-A3B \
-          --output-path "$$OUTPUT" \
-          --gpus 0,1,2,3
-    # device_ids 指定物理卡号；容器内逻辑编号始终从 0 开始（0,1,2,3）
-    # --gpus 参数传容器内逻辑编号，不要用物理编号
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              device_ids: ['2', '3', '4', '5']
-              capabilities: [gpu]
-
-  # ─────────────────────────────────────────────────────────────
-  # 方案二: llmcompressor W4A16_ASYM（精度最高）
-  #   复现 cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit，需 4×80GB + 校准数据
+  # llmcompressor W4A16_ASYM AWQ 量化（单卡 sequential offload）
+  #   - 复现 cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit 量化方法
+  #   - 推荐用于 256 expert MoE 量化(llmcompressor 官方优化路径)
+  #   - 资源:1× 80GB GPU + ≥256GB CPU RAM,耗时 4~8 小时
   # ─────────────────────────────────────────────────────────────
   quant-llmcompressor:
-    <<: *common
-    image: model.vnet.com/sjhl/vllm-openai:v0.23.0
+    runtime: nvidia
+    ipc: host
+    shm_size: "64g"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    image: model.vnet.com/sjhl/vllm-openai:v0.23.0-llmcompressor
     container_name: Qwen3.6-35B-A3B-quant-llmcompressor
+    environment:
+      # ── GPU: 只挂 1 张卡(物理卡 2),走单卡 sequential offload ──
+      # 想换其他卡号,同步修改下方 deploy.resources.devices.device_ids
+      NVIDIA_VISIBLE_DEVICES: "2"
+      HF_HOME: "/media/llm/.cache/huggingface"
+      # 校准数据集独立缓存目录（持久化到宿主机,重跑直接复用,避免反复下载）
+      HF_DATASETS_CACHE: "/media/quantize/datasets"
+      HF_ENDPOINT: "https://huggingface.co"
+      # HuggingFace 访问 token（用于下载需要授权的数据集,可被 shell HF_TOKEN 覆盖）
+      HF_TOKEN: "${HF_TOKEN:-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}"
+      HUGGING_FACE_HUB_TOKEN: "${HF_TOKEN:-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}"
+      # 下载 HF 资源默认走内网代理（可被 shell HTTPS_PROXY 覆盖,无代理时传空串""）
+      HTTP_PROXY: "${HTTP_PROXY:-http://172.31.0.55:20171}"
+      HTTPS_PROXY: "${HTTPS_PROXY:-http://172.31.0.55:20171}"
+      http_proxy: "${HTTP_PROXY:-http://172.31.0.55:20171}"
+      https_proxy: "${HTTPS_PROXY:-http://172.31.0.55:20171}"
+      NO_PROXY: "${NO_PROXY:-localhost,127.0.0.1,172.31.0.0/16,model.vnet.com}"
+      no_proxy: "${NO_PROXY:-localhost,127.0.0.1,172.31.0.0/16,model.vnet.com}"
+      TRANSFORMERS_OFFLINE: "0"
+      # 可通过环境变量覆盖默认校准配置（参考 ../docs/dataset.md）
+      # 默认混合 cyankiwi(中英 256) + ultrachat_200k(英文 256)
+      CALIB_DATASET: "${CALIB_DATASET:-cyankiwi/calibration,HuggingFaceH4/ultrachat_200k}"
+      CALIB_SAMPLES: "${CALIB_SAMPLES:-256,256}"
+    volumes:
+      - /media/llm:/media/llm
+      # 校准集缓存挂载（与 HF_DATASETS_CACHE 对应,持久化到宿主机）
+      - /media/quantize/datasets:/media/quantize/datasets
+      - /etc/localtime:/etc/localtime
+      # 挂载 model_quantize/ 父目录 —— 让脚本同时能访问 ../llmcompressor_common/ 公共库
+      - ../:/workspace/model_quantize
+    working_dir: /workspace/model_quantize/Qwen3.6-35B-A3B-AWQ
     entrypoint:
       - bash
       - -c
       - |
         set -e
-        OUTPUT=/media/llm/Qwen/Qwen3.6-35B-A3B-AWQ-4bit-LC
+        OUTPUT=/media/llm/Qwen/Qwen3.6-35B-A3B-AWQ-4bit
         echo "=== 清空输出目录: $$OUTPUT ==="
         rm -rf "$$OUTPUT" && mkdir -p "$$OUTPUT"
-        echo '=== 安装依赖（国内源，不走代理）==='
-        pip install -r requirements.txt \
-          -i https://mirrors.aliyun.com/pypi/simple/ \
-          --extra-index-url https://pypi.tuna.tsinghua.edu.cn/simple/ \
-          --timeout 120 --retries 5 -q \
-        || pip install -r requirements.txt \
-          -i https://pypi.mirrors.ustc.edu.cn/simple/ \
-          --timeout 180 --retries 5 -q
-        echo '=== 设置 HuggingFace 代理（pip 安装完成后）==='
-        export HTTP_PROXY=http://172.31.0.55:20171
-        export HTTPS_PROXY=http://172.31.0.55:20171
-        export http_proxy=http://172.31.0.55:20171
-        export https_proxy=http://172.31.0.55:20171
-        export NO_PROXY=localhost,127.0.0.1,172.31.0.0/16,model.vnet.com
-        export no_proxy=localhost,127.0.0.1,172.31.0.0/16,model.vnet.com
-        echo '=== 开始 llmcompressor 量化（4卡并行: 0,1,2,3）==='
+        # 校准数据集缓存目录（与 HF_DATASETS_CACHE 对应）
+        mkdir -p /media/quantize/datasets
+        echo '=== 镜像已预装 llmcompressor==0.12.0 / datasets==5.0.0 / accelerate==1.13.0，跳过 pip 安装 ==='
+        echo "=== HF 代理: $$HTTPS_PROXY  (NO_PROXY=$$NO_PROXY) ==="
+        echo "=== 开始 llmcompressor 量化（单卡 sequential offload，校准集: $$CALIB_DATASET，样本: $$CALIB_SAMPLES）==="
+        # --gpus 0: 容器内只有 1 张 GPU(由 NVIDIA_VISIBLE_DEVICES 决定),逻辑编号始终从 0 开始
+        # 不传 --multi-gpu: 走单卡 sequential offload,llmcompressor 内部 CPU offload + 逐层流式
         python3 quantize_llmcompressor.py \
           --model-path /media/llm/Qwen/Qwen3.6-35B-A3B \
           --output-path "$$OUTPUT" \
-          --gpus 0,1,2,3 \
-          --calib-dataset cyankiwi/calibration \
-          --calib-samples 384 \
+          --gpus 0 \
+          --calib-dataset "$$CALIB_DATASET" \
+          --calib-samples "$$CALIB_SAMPLES" \
           --max-seq-length 2048 \
           --scheme W4A16_ASYM
     deploy:
@@ -112,5 +109,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ['2', '3', '4', '5']
+              # 只挂 1 张物理卡（与上方 NVIDIA_VISIBLE_DEVICES 保持一致）
+              # 换卡号时同步修改两处
+              device_ids: ['2']
               capabilities: [gpu]

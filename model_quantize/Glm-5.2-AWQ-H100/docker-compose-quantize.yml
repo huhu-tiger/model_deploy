@@ -39,6 +39,9 @@ x-common: &common
     HF_DATASETS_CACHE: "/media/quantize/datasets"
     # TORCH_HOME：PyTorch Hub 缓存（kernel/extension 下载）
     TORCH_HOME: "/media/quantize/torch"
+    # HuggingFace 访问 token（用于下载需要授权的数据集,可被 shell HF_TOKEN 覆盖）
+    HF_TOKEN: "${HF_TOKEN:-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}"
+    HUGGING_FACE_HUB_TOKEN: "${HF_TOKEN:-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}"
     TRANSFORMERS_OFFLINE: "1"
     # MoE gate_up_proj 合并时显存碎片化修复：允许 PyTorch 复用保留但未使用的显存
     PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
@@ -47,8 +50,9 @@ x-common: &common
     - /media/quantize/datasets:/media/quantize/datasets
     - /media/quantize/torch:/media/quantize/torch
     - /etc/localtime:/etc/localtime
-    - ./:/workspace/quantize
-  working_dir: /workspace/quantize
+    # 挂载 model_quantize/ 父目录 —— 让脚本同时能访问 ../llmcompressor_common/ 公共库
+    - ../:/workspace/model_quantize
+  working_dir: /workspace/model_quantize/Glm-5.2-AWQ-H100
 
 services:
 
