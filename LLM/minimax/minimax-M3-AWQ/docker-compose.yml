@@ -47,6 +47,8 @@ services:
     volumes:
       - /media/llm:/media/llm
       - /etc/localtime:/etc/localtime
+      # PR #46124: fix <mm:think> leaking into delta.content on streaming
+      - ./minimax_m3_reasoning_parser.py:/usr/local/lib/python3.12/dist-packages/vllm/reasoning/minimax_m3_reasoning_parser.py:ro
     ports:
       - "30001:30001"
     ulimits:

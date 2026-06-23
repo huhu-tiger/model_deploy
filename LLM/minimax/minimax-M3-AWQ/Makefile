@@ -6,7 +6,7 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 COMPOSE := docker compose -f $(ROOT)/docker-compose.yml
 
 # ── 推荐: minimax-m3 底座 + 本地 patch 文件（零网络依赖，~1min）──
-IMAGE_PATCH ?= model.vnet.com/sjhl/vllm-openai:minimax-m3-awq
+IMAGE ?= model.vnet.com/sjhl/vllm-openai:minimax-m3-awq
 DOCKERFILE_PATCH := $(ROOT)/Dockerfile.minimax-m3-patch
 PATCH_FILE := $(ROOT)/minimax-m3-awq.patch
 
@@ -25,8 +25,6 @@ UPSTREAM_COMMIT ?= a7fdfeef72323eb3db6f0620e4ea200290d0ca5a
 HTTP_PROXY  ?= http://172.31.0.55:20171
 HTTPS_PROXY ?= http://172.31.0.55:20171
 
-IMAGE ?= $(IMAGE_PATCH)
-
 BUILD_ARGS :=
 ifneq ($(strip $(HTTP_PROXY)),)
 BUILD_ARGS += --build-arg HTTP_PROXY=$(HTTP_PROXY)
@@ -40,8 +38,8 @@ help:
 	@echo ""
 	@echo "推荐方案 — 本地 patch 文件，零网络依赖，构建 ~1min"
 	@echo "  make patch       生成/更新 $(PATCH_FILE)（仅需一次，需 GitHub 代理）"
-	@echo "  make build       构建镜像 $(IMAGE_PATCH)（需先 make patch）"
-	@echo "  make up          构建并 docker compose up -d"
+	@echo "  make build       构建镜像 $(IMAGE)（需先 make patch）"
+	@echo "  make up          docker compose up -d（镜像: $(IMAGE)）"
 	@echo "  make pull-base   拉取基础镜像 $(BASE_IMAGE_A)"
 	@echo ""
 	@echo "备用方案 — 构建时 git clone（需 GitHub 代理，~10min）"
@@ -51,6 +49,7 @@ help:
 	@echo "运维: make down | restart | logs | ps"
 	@echo ""
 	@echo "可调变量:"
+	@echo "  IMAGE=$(IMAGE)"
 	@echo "  BASE_IMAGE_A=$(BASE_IMAGE_A)"
 	@echo "  PATCH_COMMIT=$(PATCH_COMMIT)"
 	@echo "  UPSTREAM_COMMIT=$(UPSTREAM_COMMIT)"
@@ -78,7 +77,7 @@ patch:
 # 推荐: COPY 本地 patch，零网络
 build:
 	@test -f "$(PATCH_FILE)" || { echo "ERROR: $(PATCH_FILE) not found. Run: make patch"; exit 1; }
-	docker build -t $(IMAGE_PATCH) \
+	docker build -t $(IMAGE) \
 	  --build-arg BASE_IMAGE=$(BASE_IMAGE_A) \
 	  -f $(DOCKERFILE_PATCH) $(ROOT)
 
@@ -88,8 +87,8 @@ build-a:
 	  --build-arg BASE_IMAGE=$(BASE_IMAGE_A) \
 	  -f $(DOCKERFILE_A) $(ROOT)
 
-up: build
-	IMAGE=$(IMAGE_PATCH) $(COMPOSE) up -d
+up:
+	IMAGE=$(IMAGE) $(COMPOSE) up -d
 
 up-a: build-a
 	IMAGE=$(IMAGE_A) $(COMPOSE) up -d
