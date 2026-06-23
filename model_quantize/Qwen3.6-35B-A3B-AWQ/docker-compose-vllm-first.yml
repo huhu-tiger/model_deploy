@@ -1,0 +1,85 @@
+version: "3.9"
+
+# vLLM 加载本地 llmcompressor AWQ-4bit MoE（v0.22.1）
+# 权重: /media/llm/Qwen/Qwen3.6-35B-A3B-AWQ-4bit
+# 量化: docker compose -f docker-compose-quantize.yml run --rm quant-llmcompressor
+#
+# config.json 修复说明:
+#   llmcompressor 保存的产物 model_type=qwen3_5_moe_text / arch=Qwen3_5MoeForCausalLM，
+#   vLLM v0.22.1/v0.23.0 均无法正确路由（PR #36850 尚未合入内部镜像）。
+#   已手动将 config.json 恢复为 VL 格式（model_type=qwen3_5_moe，arch=
+#   Qwen3_5MoeForConditionalGeneration），并注入 quantization_config；
+#   同时 symlink 了 preprocessor_config.json 等文件。
+#   备份: /media/llm/Qwen/Qwen3.6-35B-A3B-AWQ-4bit/config.json.bak
+#
+# 参数档位（4×A800；openqa 压测 conc48 延迟最低、conc64 RPS 最高）:
+# ┌────────────────┬──────────────┬─────────────────────────┬──────────────────┐
+# │ 档位           │ max-num-seqs │ max-num-batched-tokens  │ gpu-memory-util  │
+# ├────────────────┼──────────────┼─────────────────────────┼──────────────────┤
+# │ 保守档         │ 64           │ 8192                    │ 0.85             │
+# │ 高吞吐档       │ 96           │ 32768                   │ 0.90             │
+# │ 高并发低延迟档 │ 128          │ 16384                   │ 0.90  ← 当前     │
+# └────────────────┴──────────────┴─────────────────────────┴──────────────────┘
+#
+# 高并发低延迟要点:
+#   * max-num-seqs 128：承接 conc64+ 排队，压测未触顶可再试 160
+#   * batched-tokens 16384：比 32768 更易插队，降低 TTFT / 尾延迟
+#   * async-scheduling + CUDAGraph：decode 稳态延迟更低
+#   * v0.22.1 不支持 Concurrent Partial Prefill，勿设 max-num-partial-prefills>1
+# 方案 A（生产 API）: dtype auto、量化由 vLLM 自动识别 compressed-tensors
+# 纯吞吐压测: 可注释 reasoning-parser / tool-call 三行（grammar 有额外开销）
+# 业务要 32k 上下文: 保持 max-model-len 32768；仅短 prompt 可改为 16384 换并发
+
+services:
+  qwen3-6-35b-a3b-awq-4bit-vllm:
+    image: model.vnet.com/sjhl/vllm-openai:v0.22.1
+    container_name: Qwen3.6-35B-A3B-AWQ-4bit-vLLM
+    restart: always
+    runtime: nvidia
+    command: >
+      /media/llm/Qwen/Qwen3.6-35B-A3B-AWQ-4bit
+      --served-model-name Qwen3.6-35B-A3B
+      --host 0.0.0.0
+      --port 30001
+      --tensor-parallel-size 1
+      --trust-remote-code
+      --dtype float16
+      --limit-mm-per-prompt '{"image": 0, "video": 0}'
+      --gpu-memory-utilization 0.90
+      --max-model-len 32768
+      --max-num-seqs 128
+      --max-num-batched-tokens 16384
+      --enable-chunked-prefill
+      --enable-prefix-caching
+      --async-scheduling
+      --compilation-config '{"mode": 3, "cudagraph_capture_sizes": [1, 2, 4, 8, 16, 32, 48, 64]}'
+      --reasoning-parser qwen3
+      --enable-auto-tool-choice
+      --tool-call-parser qwen3_coder
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "2"
+      VLLM_USE_MODELSCOPE: "false"
+      NCCL_DEBUG: "warn"
+    volumes:
+      - /media/llm:/media/llm
+      - /etc/localtime:/etc/localtime
+    ports:
+      - "30001:30001"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 900s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['2']
+              capabilities: [gpu]
