@@ -1,6 +1,28 @@
-evalscope[all]==1.5.0
+# ============================================================================
+# model_test conda 环境依赖
+# ============================================================================
+# 一键安装（推荐，bfcl-eval 用官方源避开清华源缺包问题）：
+#   conda activate model_test
+#   pip install -r pip.txt
+#   pip install bfcl-eval==2025.10.27.1 -i https://pypi.org/simple/
+#
+# 备选：阿里云镜像（国内更快，mistralai 已同步）
+#   pip install bfcl-eval==2025.10.27.1 -i https://mirrors.aliyun.com/pypi/simple/
+# ============================================================================
+
+# ---- 核心评测框架（perf 压测 + eval 能力评测）-----------------------------
+evalscope[all]==1.8.1
 transformers
 huggingface_hub==0.25.2
-# 可视化插件
+
+# ---- 可视化（test_*.sh perf 压测用 swanlab）------------------------------
 swanlab
 swanlab[dashboard]
+
+# ---- 工具调用评测 BFCL（eval_capability/eval_tool_calling.py 用）---------
+# 注意：清华源未同步该包的依赖 mistralai==1.7.0，本行单独装时需指定官方源：
+#   pip install bfcl-eval==2025.10.27.1 -i https://pypi.org/simple/
+# 不跑工具调用评测可注释掉下面两行。
+bfcl-eval==2025.10.27.1
+# qwen-agent 顶层 import soundfile，bfcl_v3 打分阶段会间接拉起；与音频评测无关，但必须安装
+soundfile

@@ -7,7 +7,7 @@
 ```bash
 conda activate model_test
 
-pip install "evalscope[all]==1.5.0"
+pip install "evalscope[all]==1.8.1"
 pip install transformers -U
 pip install huggingface_hub==0.25.2
 
