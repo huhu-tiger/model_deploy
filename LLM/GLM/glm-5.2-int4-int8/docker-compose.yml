@@ -1,0 +1,63 @@
+version: "3.9"
+
+# GLM-5.2-Int4-Int8Mix — vLLM（compressed-tensors 混合精度）
+# ModelScope: https://modelscope.cn/models/tclf90/GLM-5.2-Int4-Int8Mix
+#
+# 权重路径: /media/llm/tclf90/GLM-5.2-Int4-Int8Mix（约 405.52 GB）
+# 镜像: docker pull model.vnet.com/sjhl/vllm-openai:glm52
+#
+# 启动参数参考模型页官方 vLLM 命令（端口改为 30002 以区分 awq 服务）
+
+services:
+  glm-5.2-int4-int8mix-vllm:
+    image: ${IMAGE:-model.vnet.com/sjhl/vllm-openai:glm52}
+    container_name: GLM-5.2-Int4-Int8Mix-vLLM
+    restart: always
+    runtime: nvidia
+    command: >
+      /media/llm/QuantTrio/GLM-5.2-Int4-Int8Mix/
+      --host 0.0.0.0
+      --port 30001
+      --served-model-name GLM-5.2
+      --trust-remote-code
+      --dtype bfloat16
+      --quantization compressed-tensors
+      --kv-cache-dtype fp8
+      --tensor-parallel-size 8
+      --enable-expert-parallel
+      --max-model-len 65536
+      --gpu-memory-utilization 0.90
+      --max-num-seqs 32
+      --enable-auto-tool-choice
+      --tool-call-parser glm47
+      --reasoning-parser glm45
+      --speculative-config.method mtp 
+      --speculative-config.num_speculative_tokens 1 
+      --disable-uvicorn-access-log
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+      VLLM_USE_MODELSCOPE: "false"
+      NCCL_DEBUG: "warn"
+    volumes:
+      - /media/llm:/media/llm
+      - /etc/localtime:/etc/localtime
+    ports:
+      - "30001:30001"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30002/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 1200s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1', '2', '3', '4', '5', '6', '7']
+              capabilities: [gpu]
