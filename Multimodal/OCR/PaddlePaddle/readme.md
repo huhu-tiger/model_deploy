@@ -1,0 +1,1 @@
+ln -s /media/llm/PaddlePaddle/PaddleOCR-VL official_models/

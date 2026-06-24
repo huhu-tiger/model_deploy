@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  paddlex:
+    image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddlex-genai-vllm-server
+
+    container_name: paddlex
+    runtime: nvidia  # 使用 NVIDIA GPU
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=2  # 仅使用第 3 块 GPU（从 0 起算为 cuda:2）
+    volumes:
+      - /media/llm/PaddlePaddle/PaddleOCR-VL:/root/.paddlex/official_models/PaddleOCR-VL
+      - ./work:/root/work
+    shm_size: 8g
+    stdin_open: true  # 允许交互
+    tty: true         # 分配伪终端
+    ports:
+      - "8080:8080"   # 将宿主机 8080 映射到容器 8080
+    restart: unless-stopped
+    command: /bin/bash -c "tail -f /dev/null"
