@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  qwen3-reranker-8b:
+    image: model.vnet.com/sjhl/vllm-openai:v0.12.0
+    container_name: qwen3-reranker-8b
+    runtime: nvidia
+    environment:
+      CUDA_VISIBLE_DEVICES: "1"
+    volumes:
+      - /opt/llm/:/opt/llm/
+    ports:
+      - "8017:1234"
+    ipc: host
+    command: >
+      --served-model-name "Qwen3-Reranker-8B"
+      --model "/opt/llm/Qwen/Qwen3-Reranker-8B"
+      --port 1234
+      --task score
+      --trust-remote-code
+      --hf_overrides '{"architectures":["Qwen3ForSequenceClassification"],"classifier_from_token":["no","yes"],"is_original_qwen3_reranker":true}'
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+networks:
+  default:
+    driver: bridge

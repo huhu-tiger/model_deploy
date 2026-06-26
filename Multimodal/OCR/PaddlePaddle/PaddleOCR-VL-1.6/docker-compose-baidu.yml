@@ -1,0 +1,78 @@
+# PaddleOCR-VL-1.6 官方百度两容器部署
+# 参考: https://github.com/PaddlePaddle/PaddleOCR/blob/main/deploy/paddleocr_vl_docker/accelerators/nvidia-gpu/compose.yaml
+#
+# 启动:
+#   docker compose -f docker-compose-baidu.yml pull
+#   docker compose -f docker-compose-baidu.yml up -d
+# 停止:
+#   docker compose -f docker-compose-baidu.yml down
+#
+# 宿主机目录说明（首次启动时自动下载，后续复用）：
+#   /media/llm/paddleocr/official_models/
+#     ├── PaddleOCR-VL-1.6/          VLM 推理模型（paddle 静态图格式，API 容器用）
+#     ├── PP-DocLayoutV3/             版面分析模型
+#     ├── PP-LCNet_x1_0_doc_ori/     文档方向分类模型
+#     └── UVDoc/                      文档矫正模型
+#   /media/llm/paddleocr/fonts/       渲染字体（PingFang 等）
+#   /media/llm/paddleocr/vlm_models/  VLM 推理模型（HuggingFace 格式，VLM server 用）
+
+services:
+  paddleocr-vl-api:
+    image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-vl:latest-nvidia-gpu-offline
+    container_name: paddleocr-vl-1.6-api
+    ports:
+      - "30008:8080"
+    depends_on:
+      paddleocr-vlm-server:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["7"]
+              capabilities: [gpu]
+    shm_size: 64g
+    user: root
+    restart: unless-stopped
+    environment:
+      - VLM_BACKEND=vllm
+      - PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
+    volumes:
+      # paddle 静态图模型缓存（API 容器所需的版面/OCR 模型均在此）
+      - /media/llm/paddleocr/official_models:/home/paddleocr/.paddlex/official_models
+      # 渲染字体
+      - /media/llm/paddleocr/fonts:/home/paddleocr/.paddlex/fonts
+    command: /bin/bash -c "paddlex --serve --pipeline /home/paddleocr/pipeline_config_vllm.yaml"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  paddleocr-vlm-server:
+    image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-genai-vllm-server:latest-nvidia-gpu-offline
+    container_name: paddleocr-vl-1.6-vlm-server
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["7"]
+              capabilities: [gpu]
+    shm_size: 64g
+    user: root
+    restart: unless-stopped
+    environment:
+      - PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
+    volumes:
+      # VLM 推理模型（HuggingFace 格式），路径与 API 容器的 official_models 共享，
+      # 避免同一模型重复下载
+      - /media/llm/paddleocr/official_models:/home/paddleocr/.paddlex/official_models
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s

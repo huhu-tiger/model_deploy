@@ -1,244 +1,203 @@
-## PaddleOCR-VL-1.5 部署与接口说明
+# PaddleOCR-VL-1.6 部署说明
 
-### 一、服务信息
+- **模型主页**：[HuggingFace - PaddlePaddle/PaddleOCR-VL](https://huggingface.co/PaddlePaddle/PaddleOCR-VL)
+- **官方文档**：[PaddleOCR-VL Usage Tutorial](https://www.paddleocr.ai/latest/en/version3.x/pipeline_usage/PaddleOCR-VL.html)
+- **GPU**：第 7 号卡
 
-- **模型**：PaddleOCR-VL-1.5-0.9B（vLLM 推理）
-- **主页**：[https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.5](https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.5)
-- **容器**：`ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-genai-vllm-server:latest-nvidia-gpu`
-- **监听地址**：`0.0.0.0`
-- **端口**：`8081`
-- **GPU 使用**：仅使用第 **7** 号 GPU
-- **容器用户**：`root`（`user: "0:0"`，`privileged: true`）
-- **数据挂载**：宿主机 `/media/llm/paddleocr` → 容器 `/home/paddleocr/.paddlex`
+本目录提供两种部署方案，按业务需求二选一：
 
-对应 `docker-compose.yml` 关键片段（简化）：
+---
 
-```yaml
-services:
-  paddleocr-vl:
-    image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-genai-vllm-server:latest-nvidia-gpu
-    container_name: paddleocr-genai-vllm-server
-    runtime: nvidia
-    user: "0:0"
-    privileged: true
-    volumes:
-      - /media/llm/paddleocr:/home/paddleocr/.paddlex
-    ipc: host
-    ports:
-      - "8081:8081"
-    command: >
-      paddleocr genai_server
-      --model_name PaddleOCR-VL-1.5-0.9B
-      --host 0.0.0.0
-      --port 8081
-      --backend vllm
+## 方案对比
+
+| | 方案一：官方百度（`docker-compose-baidu.yml`） | 方案二：vLLM 直连（`docker-compose.yml`） |
+|---|---|---|
+| **对外 API** | PaddleX 协议（`POST /layout-parsing`） | OpenAI 兼容（`POST /v1/chat/completions`） |
+| **OCR 能力** | 完整 Pipeline：版面分析 + 文字识别 + 后处理 | 仅 VLM 推理，OCR 后处理需自行实现 |
+| **容器数** | 2（API 网关 + VLM 推理） | 1 |
+| **镜像来源** | 百度 CCR（`ccr-2vdh3abv-pub.cnc.bj.baidubce.com`） | 私有仓库（`model.vnet.com`） |
+| **共享内存** | 64GB × 2 | 8GB |
+| **宿主机端口** | `30008` | `30007` |
+| **适用场景** | 直接对外提供 OCR 服务，开箱即用 | 集成到已有 OpenAI 生态平台 |
+
+---
+
+## 方案一：官方百度两容器（`docker-compose-baidu.yml`）
+
+### 架构
+
+```
+外部请求 → paddleocr-vl-api (PaddleX Pipeline :30008)
+                ↓ 内部调用
+           paddleocr-vlm-server (vLLM 推理，仅内部可见)
 ```
 
-启动 / 停止命令：
+### 宿主机目录结构
+
+首次启动时，官方镜像会自动下载模型并缓存到以下宿主机目录（后续复用，无需重复下载）：
+
+```
+/media/llm/paddleocr/
+├── official_models/
+│   ├── PaddleOCR-VL-1.6/          VLM 推理模型（paddle 静态图，API 容器用）
+│   ├── PP-DocLayoutV3/             版面分析模型
+│   ├── PP-LCNet_x1_0_doc_ori/     文档方向分类模型
+│   └── UVDoc/                      文档矫正模型
+│   └── ...                         VLM server 下载的 HuggingFace 格式模型
+└── fonts/                          渲染字体（PingFang 等）
+```
+
+两个容器共享 `official_models` 目录，同一模型不会重复下载。
+
+### 启动 / 停止
 
 ```bash
-cd /media/source/model_deploy/Multimodal/OCR/PaddlePaddle/PaddleOCR-VL-1.5
-docker compose up -d    # 启动
-docker compose down     # 停止并删除容器
+cd /media/source/model_deploy/Multimodal/OCR/PaddlePaddle/PaddleOCR-VL-1.6
+
+# 首次：拉取镜像
+docker compose -f docker-compose-baidu.yml pull
+
+# 启动（后台运行）
+docker compose -f docker-compose-baidu.yml up -d
+
+# 查看日志（VLM server 首次下载模型耗时较长，start_period 为 300s）
+docker compose -f docker-compose-baidu.yml logs -f
+
+# 停止
+docker compose -f docker-compose-baidu.yml down
 ```
 
+### 健康检查
+
+```bash
+curl -f http://localhost:30008/health
+```
+
+### API 调用
+
+主要端点：`POST /layout-parsing`（文档版面解析 + OCR）
+
+```bash
+# curl 示例（传图片 URL）
+curl -X POST "http://localhost:30008/layout-parsing" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file": "https://example.com/document.png",
+    "fileType": 1
+  }'
+```
+
+```python
+# Python 示例（传 base64）
+import base64, requests
+
+with open("document.png", "rb") as f:
+    file_b64 = base64.b64encode(f.read()).decode("ascii")
+
+resp = requests.post(
+    "http://localhost:30008/layout-parsing",
+    json={"file": file_b64, "fileType": 1},
+    timeout=3600,
+)
+print(resp.json())
+```
+
+完整接口说明见 [官方文档 Service Deployment](https://www.paddleocr.ai/latest/en/version3.x/pipeline_usage/PaddleOCR-VL.html)。
+
 ---
 
-### 二、HTTP API 概览
+## 方案二：vLLM 直连（`docker-compose.yml`）
 
-本服务兼容 **OpenAI Chat Completions** 协议，可直接使用 OpenAI 官方 SDK 访问。
+### 架构
 
-- **Base URL**：`http://<服务器IP>:8081/v1`
-- **主要接口**：`POST /v1/chat/completions`
-- **内容类型**：`application/json`
-- **鉴权**：示例中使用 `Authorization: Bearer EMPTY`，可根据需要自行实现真实鉴权。
+```
+外部请求 → paddleocr-vl-1.6-vllm-server (vLLM OpenAI API :30007)
+```
 
----
+### 宿主机目录结构
 
-### 三、接口定义：`POST /v1/chat/completions`
+模型从宿主机直接挂载，无需下载：
 
-#### 1. 请求头
+```
+/media/llm/PaddlePaddle/
+└── PaddleOCR-VL-1.6/    HuggingFace 格式模型（直接映射进容器）
+```
 
-- `Content-Type: application/json`
-- `Authorization: Bearer <API_KEY>`（如无鉴权，可写任意值或省略）
+### 启动 / 停止
 
-#### 2. 请求体（Request Body）
+```bash
+cd /media/source/model_deploy/Multimodal/OCR/PaddlePaddle/PaddleOCR-VL-1.6
 
-```json
-{
-  "model": "PaddleOCR-VL-1.5-0.9B",
-  "messages": [
-    {
+# 启动
+docker compose up -d
+
+# 查看日志
+docker compose logs -f
+
+# 停止
+docker compose down
+```
+
+### 健康检查
+
+```bash
+curl -f http://localhost:30007/health
+```
+
+### API 调用
+
+兼容 OpenAI Chat Completions 协议，Base URL 为 `http://<服务器IP>:30007/v1`。
+
+支持的任务类型（通过 `text` 字段区分）：
+
+| 任务 | 提示词 |
+|------|--------|
+| 通用 OCR | `"OCR:"` |
+| 表格识别 | `"Table Recognition:"` |
+| 公式识别 | `"Formula Recognition:"` |
+| 图表识别 | `"Chart Recognition:"` |
+
+```bash
+# curl 示例
+curl -X POST "http://localhost:30007/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "PaddleOCR-VL-1.6",
+    "messages": [{
       "role": "user",
       "content": [
-        {
-          "type": "image_url",
-          "image_url": {
-            "url": "https://example.com/your-image.png"
-          }
-        },
-        {
-          "type": "text",
-          "text": "OCR:"
-        }
+        {"type": "image_url", "image_url": {"url": "https://example.com/img.png"}},
+        {"type": "text", "text": "OCR:"}
       ]
-    }
-  ],
-  "temperature": 0.0
-}
-```
-
-- **model**
-  - 默认：`"PaddlePaddle/PaddleOCR-VL"`
-  - 如启动 vLLM 时指定 `--served-model-name PaddleOCR-VL-0.9B`，则此处填 `"PaddleOCR-VL-0.9B"`。
-- **messages**
-  - `role`：`"user" | "system" | "assistant"`
-  - `content`：数组，支持多模态内容：
-    - 图像块：
-      - `type: "image_url"`
-      - `image_url.url`：图片 URL（HTTP/HTTPS）
-    - 文本块：
-      - `type: "text"`
-      - `text`：任务提示词（见下文任务类型）
-- **temperature**
-  - 采样温度，OCR 场景建议 `0.0`，提高稳定性。
-
-#### 3. 任务类型提示词
-
-参考官方文档 [PaddleOCR-VL Usage Guide](https://docs.vllm.ai/projects/recipes/en/latest/PaddlePaddle/PaddleOCR-VL.html#querying-with-openai-api-client)，不同任务通过文本提示词区分：
-
-- **通用 OCR**：`"OCR:"`
-- **表格识别**：`"Table Recognition:"`
-- **公式识别**：`"Formula Recognition:"`
-- **图表识别**：`"Chart Recognition:"`
-
-示例：表格识别时仅需将上面示例中的 `"OCR:"` 替换为 `"Table Recognition:"`。
-
----
-
-### 四、响应说明（Response）
-
-成功时返回与 OpenAI Chat Completions 类似的结构，例如：
-
-```json
-{
-  "id": "chatcmpl-xxx",
-  "object": "chat.completion",
-  "created": 1737360000,
-  "model": "PaddlePaddle/PaddleOCR-VL",
-  "choices": [
-    {
-      "index": 0,
-      "message": {
-        "role": "assistant",
-        "content": "识别结果文本..."
-      },
-      "finish_reason": "stop"
-    }
-  ],
-  "usage": {
-    "prompt_tokens": 123,
-    "completion_tokens": 45,
-    "total_tokens": 168
-  }
-}
-```
-
-- **主要字段**
-  - `choices[0].message.content`：模型输出的文本内容，即 OCR / 表格 / 公式 / 图表解析结果。
-  - `usage`：提示词、生成内容 token 统计（如启动时开启统计）。
-
-HTTP 状态码：
-
-- `200`：请求成功。
-- `4xx / 5xx`：请求失败，含错误信息（与 vLLM/OpenAI 兼容）。
-
----
-
-### 五、调用示例
-
-#### 1. curl 示例（通用 OCR，固定 IP）
-
-```bash
-curl --location --request POST 'http://39.155.179.4:8081/v1/chat/completions' \
---header 'Content-Type: application/json' \
---data-raw '{
-    "model": "PaddleOCR-VL-1.5-0.9B",
-    "messages": [
-      {
-        "role": "user",
-        "content": [
-          {
-            "type": "image_url",
-            "image_url": {
-              "url": "https://ofasys-multimodal-wlcb-3-toshanghai.oss-accelerate.aliyuncs.com/wpf272043/keepme/image/receipt.png"
-            }
-          },
-          {
-            "type": "text",
-            "text": "OCR:"
-          }
-        ]
-      }
-    ],
+    }],
     "temperature": 0.0
   }'
 ```
 
-#### 2. Python 示例（官方 OpenAI 客户端）
-
 ```python
+# Python 示例
 from openai import OpenAI
 
-client = OpenAI(
-    api_key="EMPTY",  # 如有真实鉴权，可替换
-    base_url="http://<服务器IP>:8081/v1",
-    timeout=3600
-)
-
-TASKS = {
-    "ocr": "OCR:",
-    "table": "Table Recognition:",
-    "formula": "Formula Recognition:",
-    "chart": "Chart Recognition:",
-}
-
-messages = [
-    {
-        "role": "user",
-        "content": [
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": "https://ofasys-multimodal-wlcb-3-toshanghai.oss-accelerate.aliyuncs.com/wpf272043/keepme/image/receipt.png"
-                }
-            },
-            {
-                "type": "text",
-                "text": TASKS["ocr"]  # 根据任务选择不同提示词
-            }
-        ]
-    }
-]
+client = OpenAI(api_key="EMPTY", base_url="http://localhost:30007/v1", timeout=3600)
 
 response = client.chat.completions.create(
-    model="PaddlePaddle/PaddleOCR-VL",
-    messages=messages,
+    model="PaddleOCR-VL-1.6",
+    messages=[{
+        "role": "user",
+        "content": [
+            {"type": "image_url", "image_url": {"url": "https://example.com/img.png"}},
+            {"type": "text", "text": "OCR:"},
+        ],
+    }],
     temperature=0.0,
 )
-
-print("Generated text:", response.choices[0].message.content)
+print(response.choices[0].message.content)
 ```
 
 ---
 
-### 六、注意事项与配置建议
+## 注意事项
 
-- 本说明基于官方文档 [PaddleOCR-VL Usage Guide](https://docs.vllm.ai/projects/recipes/en/latest/PaddlePaddle/PaddleOCR-VL.html#querying-with-openai-api-client)。
-- OCR 场景通常不需要多轮长对话，建议：
-  - 关闭前缀缓存、图片复用等特性（由后端 vLLM 配置负责）。
-  - 根据显存情况调整 `max_num_batched_tokens` 以提升吞吐。
-- 若遇到报错 `The model PaddleOCR-VL-0.9B does not exist.`：
-  - 启动 vLLM 时增加参数：`--served-model-name PaddleOCR-VL-0.9B`
-  - 并在请求中将 `model` 字段改为 `"PaddleOCR-VL-0.9B"`。
-
+- vLLM 方案：若出现 `The model PaddleOCR-VL-1.6 does not exist.`，确认 `--served-model-name PaddleOCR-VL-1.6` 参数已生效，并在请求中 `model` 字段填写相同名称。
+- 百度方案：VLM server 首次启动会下载模型，`start_period` 设置为 300s，期间 API 容器会等待其健康后再启动。
+- 离线环境：百度方案镜像使用 `latest-nvidia-gpu-offline`（含模型），在线环境可改为 `latest-nvidia-gpu`。
