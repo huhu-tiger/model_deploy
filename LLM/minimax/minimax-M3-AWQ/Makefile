@@ -3,7 +3,8 @@
 
 SHELL := /bin/bash
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
-COMPOSE := docker compose -f $(ROOT)/docker-compose.yml
+COMPOSE       := docker compose -f $(ROOT)/docker-compose.yml
+COMPOSE_NGINX := docker compose -f $(ROOT)/docker-compose-nginx.yml
 
 # ── 推荐: minimax-m3 底座 + 本地 patch 文件（零网络依赖，~1min）──
 IMAGE ?= model.vnet.com/sjhl/vllm-openai:minimax-m3-awq
@@ -31,7 +32,7 @@ BUILD_ARGS += --build-arg HTTP_PROXY=$(HTTP_PROXY)
 BUILD_ARGS += --build-arg HTTPS_PROXY=$(or $(HTTPS_PROXY),$(HTTP_PROXY))
 endif
 
-.PHONY: help patch build build-a up up-a down restart logs ps pull-base
+.PHONY: help patch build build-a up up-a down restart logs ps pull-base nginx-up nginx-down nginx-restart nginx-logs nginx-ps
 
 help:
 	@echo "MiniMax-M3-AWQ-INT4"
@@ -46,7 +47,18 @@ help:
 	@echo "  make build-a     构建镜像 $(IMAGE_A)"
 	@echo "  make up-a        构建并启动"
 	@echo ""
-	@echo "运维: make down | restart | logs | ps"
+	@echo "运维 - vLLM 直连模式:"
+	@echo "  make down              停止服务"
+	@echo "  make restart           重启服务"
+	@echo "  make logs              跟踪日志"
+	@echo "  make ps                查看容器状态"
+	@echo ""
+	@echo "运维 - nginx 代理模式:"
+	@echo "  make nginx-up          启动 vLLM + nginx 代理      (nginx 端口 30001, vLLM 内部 30003)"
+	@echo "  make nginx-down        停止所有服务（含 vLLM）"
+	@echo "  make nginx-restart     仅重建 nginx 容器（不影响 vLLM）"
+	@echo "  make nginx-logs        跟踪所有日志"
+	@echo "  make nginx-ps          查看容器状态"
 	@echo ""
 	@echo "可调变量:"
 	@echo "  IMAGE=$(IMAGE)"
@@ -100,12 +112,27 @@ down:
 	$(COMPOSE) down
 
 restart:
-	$(COMPOSE) restart
+	$(COMPOSE) down && IMAGE=$(IMAGE) $(COMPOSE) up -d
 
 logs:
 	$(COMPOSE) logs -f --tail=200
 
 ps:
 	$(COMPOSE) ps
+
+nginx-up:
+	IMAGE=$(IMAGE) $(COMPOSE_NGINX) up -d
+
+nginx-down:
+	$(COMPOSE_NGINX) down
+
+nginx-restart:
+	$(COMPOSE_NGINX) up -d --force-recreate nginx-llm-proxy
+
+nginx-logs:
+	$(COMPOSE_NGINX) logs -f --tail=200
+
+nginx-ps:
+	$(COMPOSE_NGINX) ps
 
 .DEFAULT_GOAL := help

@@ -1,0 +1,67 @@
+services:
+  nginx-llm-proxy:
+    # 使用 OpenResty 以便用 Lua 在 rewrite 阶段读请求体并写入日志变量（标准 nginx 的 $request_body 在 proxy 场景不生效）
+    image: model.vnet.com/sjhl/openresty:1.27.1.2-0-alpine
+    container_name: nginx-minimax-m3-proxy
+    restart: unless-stopped
+    ports:
+      - "30001:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # 让 nginx 容器能访问宿主机上的 minimax-m3-awq-int4-vllm
+    user: "0:0"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./conf.d:/etc/nginx/conf.d:ro
+      - ./logs:/var/log/nginx
+      - /etc/localtime:/etc/localtime:ro
+    command: ["openresty", "-c", "/etc/nginx/nginx.conf", "-g", "daemon off;"]
+    depends_on:
+      - minimax-m3-awq-int4-vllm
+
+  minimax-m3-awq-int4-vllm:
+    image: ${IMAGE:-model.vnet.com/sjhl/vllm-openai:minimax-m3-awq}
+    container_name: MiniMax-M3-AWQ-INT4-vLLM
+    restart: always
+    command: >
+      /media/llm/cyankiwi/MiniMax-M3-AWQ-INT4
+      --served-model-name WanWu/MiniMax-M3
+      --host 0.0.0.0
+      --port 30003
+      --tensor-parallel-size 8
+      --trust-remote-code
+      --block-size 128
+      --gpu-memory-utilization 0.90
+      --max-model-len 131072
+      --enable-chunked-prefill
+      --enable-prefix-caching
+      --tool-call-parser minimax_m3
+      --reasoning-parser minimax_m3
+      --enable-auto-tool-choice
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+      VLLM_USE_MODELSCOPE: "false"
+      NCCL_DEBUG: "warn"
+      VLLM_SKIP_WARMUP: "true"
+    volumes:
+      - /media/llm:/media/llm
+      - /etc/localtime:/etc/localtime
+      - ./minimax_m3_reasoning_parser.py:/usr/local/lib/python3.12/dist-packages/vllm/reasoning/minimax_m3_reasoning_parser.py:ro
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    network_mode: host
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30003/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 1200s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1', '2', '3', '4', '5', '6', '7']
+              capabilities: [gpu]
