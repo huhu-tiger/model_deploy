@@ -30,7 +30,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["7"]
+              device_ids: ["3"]
               capabilities: [gpu]
     shm_size: 64g
     user: root
@@ -39,10 +39,13 @@ services:
       - VLM_BACKEND=vllm
       - PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
     volumes:
-      # paddle 静态图模型缓存（API 容器所需的版面/OCR 模型均在此）
-      - /media/llm/paddleocr/official_models:/home/paddleocr/.paddlex/official_models
+      # paddle 静态图模型缓存（API 容器所需的版面/OCR 模型均在此，未命中时自动下载到此目录）
+      - ./official_models:/home/paddleocr/.paddlex/official_models
+      # 已有本地模型直接挂载到对应子目录，优先级高于父目录挂载，避免重复下载 
+      # modelscope download --model PaddlePaddle/PP-DocLayoutV3 --local_dir PaddlePaddle/PP-DocLayoutV3
+      - /media/llm/PaddlePaddle/PP-DocLayoutV3:/home/paddleocr/.paddlex/official_models/PP-DocLayoutV3
       # 渲染字体
-      - /media/llm/paddleocr/fonts:/home/paddleocr/.paddlex/fonts
+      - ./fonts:/home/paddleocr/.paddlex/fonts
     command: /bin/bash -c "paddlex --serve --pipeline /home/paddleocr/pipeline_config_vllm.yaml"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
@@ -54,12 +57,16 @@ services:
   paddleocr-vlm-server:
     image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-genai-vllm-server:latest-nvidia-gpu-offline
     container_name: paddleocr-vl-1.6-vlm-server
+    # 暴露 vLLM OpenAI 兼容接口（/v1/chat/completions 等）供外部直连
+    # 与方案二 docker-compose.yml 底层完全相同：vllm.entrypoints.openai.api_server
+    ports:
+      - "30009:8080"
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: ["7"]
+              device_ids: ["3"]
               capabilities: [gpu]
     shm_size: 64g
     user: root
@@ -67,9 +74,18 @@ services:
     environment:
       - PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
     volumes:
-      # VLM 推理模型（HuggingFace 格式），路径与 API 容器的 official_models 共享，
-      # 避免同一模型重复下载
-      - /media/llm/paddleocr/official_models:/home/paddleocr/.paddlex/official_models
+      # VLM 推理模型（HuggingFace 格式，vLLM 使用）
+      # 本地路径：/media/llm/PaddlePaddle/PaddleOCR-VL-1.6
+      # modelscope download --model PaddlePaddle/PaddleOCR-VL-1.6 --local_dir PaddlePaddle/PaddleOCR-VL-1.6
+      - /media/llm/PaddlePaddle/PaddleOCR-VL-1.6:/home/paddleocr/vlm_model
+    # 通过 --model_dir 指定本地模型路径，跳过下载
+    command: >
+      paddleocr genai_server
+        --model_name PaddleOCR-VL-1.6-0.9B
+        --model_dir /home/paddleocr/vlm_model
+        --host 0.0.0.0
+        --port 8080
+        --backend vllm
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
       interval: 30s

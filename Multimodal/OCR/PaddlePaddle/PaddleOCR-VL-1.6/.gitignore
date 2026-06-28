@@ -1,0 +1,5 @@
+# paddle 静态图模型（API 容器使用）
+official_models/
+
+# 渲染字体
+fonts/
