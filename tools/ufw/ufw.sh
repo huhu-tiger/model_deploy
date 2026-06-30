@@ -305,7 +305,7 @@ cmd_blocked_ips() {
     echo "=== DOCKER-USER 拦截 IP 统计（按次数降序）==="
     if [[ -z "$logs" ]]; then
         echo "（暂无 LOG 记录）"
-        echo "  说明：需先 make enable / make h20-43 应用带 LOG 的规则，之后新的拦截才会写入 /var/log/kern.log"
+        echo "  说明：需先 make enable / make h20-43 / make h20-44 应用带 LOG 的规则，之后新的拦截才会写入 /var/log/kern.log"
         echo ""
         echo "=== iptables DROP 计数（历史累计，不含 IP）==="
         sudo iptables -L DOCKER-USER -n -v 2>/dev/null | grep DROP || echo "（链不存在）"
