@@ -19,6 +19,7 @@ __pycache__/
 *.env
 .env.*
 !.env.example
+!tools/ufw/defaults.env
 !LLM/minimax/minimax-M3-IB/cluster.env
 Qwen-Image-2512/src/diffusers
 Qwen-Image-2512/src/
