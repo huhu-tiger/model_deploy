@@ -12,6 +12,8 @@ TARGET_PORTS ?= $(shell . "$(DEFAULTS_ENV)" && printf '%s' "$$UFW_DEFAULT_TARGET
 WHITELIST_IPS ?= $(shell . "$(DEFAULTS_ENV)" && printf '%s' "$$UFW_DEFAULT_WHITELIST")
 H20_43_PORTS     := $(shell . "$(DEFAULTS_ENV)" && printf '%s' "$$UFW_H20_43_PORTS")
 H20_43_WHITELIST := $(shell . "$(DEFAULTS_ENV)" && printf '%s' "$$UFW_H20_43_WHITELIST")
+H100_42_PORTS     := $(shell . "$(DEFAULTS_ENV)" && printf '%s' "$$UFW_H100_42_PORTS")
+H100_42_WHITELIST := $(shell . "$(DEFAULTS_ENV)" && printf '%s' "$$UFW_H100_42_WHITELIST")
 A800_40_PORTS     := $(shell . "$(DEFAULTS_ENV)" && printf '%s' "$$UFW_A800_40_PORTS")
 A800_40_WHITELIST := $(shell . "$(DEFAULTS_ENV)" && printf '%s' "$$UFW_A800_40_WHITELIST")
 
@@ -22,7 +24,7 @@ PORTS_LIST     := $(strip $(subst $(comma),$(space),$(TARGET_PORTS)))
 export TARGET_PORTS := $(PORTS_LIST)
 export WHITELIST_IPS := $(WHITELIST_LIST)
 
-.PHONY: help enable disable status dry-run blocked-ips h20-43 h20-43-dry-run A800-40 A800-40-dry-run
+.PHONY: help enable disable status dry-run blocked-ips h20-43 h20-43-dry-run H100-42 H100-42-dry-run A800-40 A800-40-dry-run
 
 BLOCKED_LINES ?= 50
 
@@ -37,6 +39,8 @@ help:
 	@echo "  make dry-run                             打印即将使用的配置（不执行）"
 	@echo "  make h20-43                              主机预设：端口 22 30001 30002，白名单=默认+10.212.0.0/16"
 	@echo "  make h20-43-dry-run                      预览 h20-43 配置"
+	@echo "  make H100-42                             主机预设：端口 22 30001，白名单=默认"
+	@echo "  make H100-42-dry-run                     预览 H100-42 配置"
 	@echo "  make A800-40                             主机预设：端口 22 9131 9116 10010:10034（/home/taojun/ufw.sh）"
 	@echo "  make A800-40-dry-run                     预览 A800-40 配置"
 	@echo ""
@@ -50,6 +54,7 @@ help:
 	@echo "  make enable WHITELIST_IPS=\"211.99.216.18,192.168.0.0/16\""
 	@echo "  make enable TARGET_PORTS=22 WHITELIST_IPS=1.2.3.4"
 	@echo "  make h20-43                              # 端口 22,30001,30002"
+	@echo "  make H100-42                             # 端口 22,30001"
 	@echo "  make A800-40                             # 端口 22,9131,9116,10010:10034"
 	@echo "  export WHITELIST_IPS=\"10.0.0.1 10.0.0.2\"; make enable"
 	@echo ""
@@ -82,6 +87,12 @@ h20-43-dry-run:
 
 h20-43:
 	@$(MAKE) enable TARGET_PORTS="$(H20_43_PORTS)" WHITELIST_IPS="$(H20_43_WHITELIST)"
+
+H100-42-dry-run:
+	@$(MAKE) dry-run TARGET_PORTS="$(H100_42_PORTS)" WHITELIST_IPS="$(H100_42_WHITELIST)"
+
+H100-42:
+	@$(MAKE) enable TARGET_PORTS="$(H100_42_PORTS)" WHITELIST_IPS="$(H100_42_WHITELIST)"
 
 A800-40-dry-run:
 	@$(MAKE) dry-run TARGET_PORTS="$(A800_40_PORTS)" WHITELIST_IPS="$(A800_40_WHITELIST)"
