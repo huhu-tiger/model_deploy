@@ -48,11 +48,11 @@ services:
       - --gpu-memory-utilization
       - "0.90"
       - --max-model-len
-      - "16384"
+      - "32768"
       - --max-num-seqs
       - "24"
       - --max-num-batched-tokens
-      - "12288"
+      - "24576"
       - --enable-chunked-prefill
       - --enable-prefix-caching
       - --kv-cache-dtype
