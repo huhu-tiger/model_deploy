@@ -18,7 +18,7 @@ services:
 
   sg-deepseekv32:
     #image: model.vnet.com/sjhl/sglang:v0.5.8
-    image: model.vnet.com/sjhl/sglang:v0.5.9
+    image: model.vnet.com/sjhl/sglang:v0.5.12
     container_name: sg-deepseekv32
     restart: always
 
