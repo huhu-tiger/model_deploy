@@ -38,10 +38,11 @@
 
 ```
 PaddleOCR-VL-1.6/                        ← 当前目录
+├── pipeline_config_vllm.yaml             ← 产线配置（use_doc_preprocessor: True，扫描件场景）
 ├── official_models/                      ← paddle 静态图模型缓存（.gitignore 已排除）
 │   ├── PP-DocLayoutV3/                   ← 直接挂载自 /media/llm/PaddlePaddle/PP-DocLayoutV3
-│   ├── PP-LCNet_x1_0_doc_ori/            ← 首次启动时自动下载
-│   └── UVDoc/                            ← 首次启动时自动下载
+│   ├── PP-LCNet_x1_0_doc_ori/            ← 文档方向分类（已下载）
+│   └── UVDoc/                            ← 文档畸变矫正（已下载）
 └── fonts/                                ← 渲染字体（首次启动时自动下载，.gitignore 已排除）
 ```
 
@@ -67,7 +68,23 @@ docker compose -f docker-compose-baidu.yml down
 
 启动耗时参考：
 - `paddleocr-vlm-server`：约 1 分钟（加载本地模型）
-- `paddleocr-vl-api`：约 2.5 分钟（加载版面/OCR 静态图模型）
+- `paddleocr-vl-api`：约 3 分钟（加载版面 + 文档预处理 + OCR 模型）
+
+### 文档预处理（扫描件）
+
+产线配置 `pipeline_config_vllm.yaml` 已启用 `use_doc_preprocessor: True`（方向矫正 + 畸变矫正）。API 调用示例：
+
+```bash
+curl -X POST "http://localhost:30008/layout-parsing" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file": "https://example.com/scan.jpg",
+    "fileType": 1,
+    "useDocOrientationClassify": true,
+    "useDocUnwarping": true,
+    "visualize": false
+  }'
+```
 
 ### 健康检查
 

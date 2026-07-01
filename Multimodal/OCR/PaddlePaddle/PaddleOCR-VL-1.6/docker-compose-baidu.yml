@@ -46,13 +46,15 @@ services:
       - /media/llm/PaddlePaddle/PP-DocLayoutV3:/home/paddleocr/.paddlex/official_models/PP-DocLayoutV3
       # 渲染字体
       - ./fonts:/home/paddleocr/.paddlex/fonts
+      # 产线配置（use_doc_preprocessor: True，扫描件启用方向矫正+畸变矫正）
+      - ./pipeline_config_vllm.yaml:/home/paddleocr/pipeline_config_vllm.yaml:ro
     command: /bin/bash -c "paddlex --serve --pipeline /home/paddleocr/pipeline_config_vllm.yaml"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 120s
+      start_period: 300s
 
   paddleocr-vlm-server:
     image: ccr-2vdh3abv-pub.cnc.bj.baidubce.com/paddlepaddle/paddleocr-genai-vllm-server:latest-nvidia-gpu-offline
