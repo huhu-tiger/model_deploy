@@ -193,7 +193,7 @@ configure_docker_user_chain() {
     if $is_v6 && ! $has_v6_rule; then
         echo "$ipt DOCKER-USER 已配置（无 IPv6 白名单，外网 IPv6 访问 Docker 端口将被拒绝；DROP 写入 kern.log）"
     else
-        echo "$ipt DOCKER-USER 已配置（DROP 写入 kern.log，make blocked-ips 查看）"
+        echo "$ipt DOCKER-USER 已配置（DROP 写入 kern.log，make log 查看）"
     fi
 }
 
@@ -283,8 +283,8 @@ cmd_disable() {
 }
 
 grep_docker_drop_logs() {
-    local f rot
-    for f in /var/log/kern.log /var/log/syslog; do
+    local f=/var/log/kern.log rot
+    {
         [[ -f "$f" ]] && sudo grep -hF "$DOCKER_USER_LOG_PREFIX" "$f" 2>/dev/null || true
         for rot in "$f".* "$f"-*; do
             [[ -e "$rot" ]] || continue
@@ -294,56 +294,94 @@ grep_docker_drop_logs() {
                 sudo grep -hF "$DOCKER_USER_LOG_PREFIX" "$rot" 2>/dev/null || true
             fi
         done
-    done
+    } | sort -u
+}
+
+format_since_window() {
+    local since="$1" cutoff="$2"
+    if [[ "$since" =~ ^([0-9]+)[[:space:]]+days?$ ]]; then
+        echo "统计窗口: 最近 ${BASH_REMATCH[1]} 天（>= ${cutoff} UTC）"
+    elif [[ "$since" =~ ^([0-9]+)[[:space:]]+hours?$ ]]; then
+        echo "统计窗口: 最近 ${BASH_REMATCH[1]} 小时（>= ${cutoff} UTC）"
+    else
+        echo "统计窗口: >= ${cutoff} UTC（BLOCKED_SINCE=${since}）"
+    fi
+}
+
+# 将 BLOCKED_SINCE（如 "1 day" / "24 hours" / ISO 时间）转为可比较的 UTC 时间前缀
+blocked_since_cutoff() {
+    local since="$1" cutoff
+    if [[ "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2} ]]; then
+        echo "${since%%+*}" | sed 's/\..*//'
+        return 0
+    fi
+    if ! cutoff=$(date -u -d "$since ago" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null); then
+        echo "错误：无效的 BLOCKED_SINCE=${since}（示例: \"1 day\", \"24 hours\"）" >&2
+        return 1
+    fi
+    echo "$cutoff"
+}
+
+filter_logs_since() {
+    local logs="$1" since="$2"
+    [[ -z "$since" ]] && { echo "$logs"; return 0; }
+    local cutoff
+    cutoff="$(blocked_since_cutoff "$since")" || return 1
+    echo "$logs" | awk -v since="$cutoff" '
+        {
+            ts = $1
+            sub(/\+.*$/, "", ts)
+            sub(/\..*$/, "", ts)
+            if (ts >= since) print
+        }'
 }
 
 cmd_blocked_ips() {
     local limit="${1:-50}"
-    local logs
+    local since="${BLOCKED_SINCE:-}"
+    local logs cutoff
     logs="$(grep_docker_drop_logs)"
-
-    echo "=== DOCKER-USER 拦截 IP 统计（按次数降序）==="
-    if [[ -z "$logs" ]]; then
-        echo "（暂无 LOG 记录）"
-        echo "  说明：需先 make enable / make h20-43 / make h20-44 应用带 LOG 的规则，之后新的拦截才会写入 /var/log/kern.log"
+    if [[ -n "$since" ]]; then
+        cutoff="$(blocked_since_cutoff "$since")" || exit 1
+        logs="$(filter_logs_since "$logs" "$since")" || exit 1
+        format_since_window "$since" "$cutoff"
         echo ""
-        echo "=== iptables DROP 计数（历史累计，不含 IP）==="
-        sudo iptables -L DOCKER-USER -n -v 2>/dev/null | grep DROP || echo "（链不存在）"
+    fi
+
+    if [[ -z "$logs" ]]; then
+        if [[ -n "$since" ]]; then
+            echo "（该时间窗口内暂无拦截记录）"
+        else
+            echo "（暂无 LOG 记录）"
+            echo "  说明：需先 make enable / make h20-43 / make h20-44 应用带 LOG 的规则，之后新的拦截才会写入 /var/log/kern.log；用 make log 查看统计"
+            echo ""
+            echo "=== iptables DROP 计数（历史累计，不含 IP）==="
+            sudo iptables -L DOCKER-USER -n -v 2>/dev/null | grep DROP || echo "（链不存在）"
+        fi
         return 0
     fi
 
-    echo "$logs" | grep -oE 'SRC=[0-9a-fA-F:.]+' | cut -d= -f2 \
-        | sort | uniq -c | sort -rn
+    printf '%s\n' "$logs" | python3 "${SCRIPT_DIR}/blocked_ips_report.py"
 
-    echo ""
-    echo "=== 按目标端口统计 ==="
-    echo "$logs" | grep -oE 'DPT=[0-9]+' | cut -d= -f2 \
-        | sort | uniq -c | sort -rn
-
-    echo ""
-    echo "=== 最近 ${limit} 条拦截明细 ==="
-    echo "$logs" | tail -n "$limit"
+    if [[ "$limit" != "0" ]]; then
+        echo "=== 最近 ${limit} 条拦截明细 ==="
+        echo "$logs" | tail -n "$limit"
+    fi
 }
 
 usage() {
     cat <<EOF
-用法: $0 <enable|disable|blocked-ips [N]>
+用法: $0 <enable|disable|blocked-ips [N]|log [N]>
 
   enable        重置并应用 UFW + DOCKER-USER 白名单规则（默认）
   disable       关闭 UFW，清空 DOCKER-USER 自定义规则
-  blocked-ips   从 kern.log 汇总 DOCKER-USER 拦截 IP（默认最近 50 条明细）
-
-环境变量:
-  TARGET_PORTS        开放端口，空格分隔（必填，不能为空）
-  WHITELIST_IPS       白名单 IP/CIDR/通配符，空格或逗号分隔（必填，不能为空）
-  EXTERNAL_INTERFACE  出口网卡，默认自动检测
-  DOCKER_USER_LOG_LIMIT   LOG 限速，默认 30/min
-  DOCKER_USER_LOG_BURST   LOG 突发，默认 50
+  blocked-ips   从 kern.log 汇总 DOCKER-USER 拦截（表格；配合 BLOCKED_SINCE 过滤）
 
 Makefile 示例:
+  make log                  最近 1 天拦截统计（表格）
+  make log DAYS=3           最近 3 天
+  make log BLOCKED_SINCE="24 hours"
   make enable TARGET_PORTS="22 8080" WHITELIST_IPS="1.2.3.4,10.0.0.0/8"
-  make blocked-ips
-  make blocked-ips BLOCKED_LINES=100
 EOF
 }
 

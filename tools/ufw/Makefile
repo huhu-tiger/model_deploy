@@ -28,14 +28,15 @@ PORTS_LIST     := $(strip $(subst $(comma),$(space),$(TARGET_PORTS)))
 export TARGET_PORTS := $(PORTS_LIST)
 export WHITELIST_IPS := $(WHITELIST_LIST)
 
-.PHONY: help enable disable status dry-run blocked-ips \
+.PHONY: help enable disable status dry-run log blocked-ips \
 	h20-43 h20-43-dry-run H20-43 H20-43-dry-run \
 	h20-44 h20-44-dry-run H20-44 H20-44-dry-run \
 	h100-42 h100-42-dry-run H100-42 H100-42-dry-run \
 	a800-40 a800-40-dry-run A800-40 A800-40-dry-run \
 	a800-43 a800-43-dry-run A800-43 A800-43-dry-run
 
-BLOCKED_LINES ?= 50
+DAYS ?= 1
+BLOCKED_SINCE ?=
 
 help:
 	@echo "UFW + Docker DOCKER-USER 白名单防火墙"
@@ -44,11 +45,12 @@ help:
 	@echo "  make enable                              应用规则并启用 UFW（默认仅开放 22/SSH）"
 	@echo "  make disable                             关闭 UFW，恢复 DOCKER-USER"
 	@echo "  make status                              查看 UFW / DOCKER-USER 状态"
-	@echo "  make blocked-ips                         查看 DOCKER-USER 拦截 IP（kern.log）"
+	@echo "  make log                                 查看最近拦截（默认最近 1 天，表格汇总）"
+	@echo "  make log DAYS=3                          查看最近 3 天拦截统计"
 	@echo "  make dry-run                             打印即将使用的配置（不执行）"
-	@echo "  make h20-43 | make H20-43                    主机预设：端口 22 30001 30002 20000，白名单=默认"
+	@echo "  make h20-43 | make H20-43                    主机预设：端口 22 30001 30002 2000:10000 20000，白名单=默认"
 	@echo "  make h20-43-dry-run | make H20-43-dry-run    预览 h20-43 配置"
-	@echo "  make h20-44 | make H20-44                    主机预设：端口 22 30002 20000，白名单=默认"
+	@echo "  make h20-44 | make H20-44                    主机预设：端口 22 30002 2000:10000 20000，白名单=默认"
 	@echo "  make h20-44-dry-run | make H20-44-dry-run    预览 h20-44 配置"
 	@echo "  make h100-42 | make H100-42                    主机预设：端口 22 30001，白名单=默认"
 	@echo "  make h100-42-dry-run | make H100-42-dry-run    预览 H100-42 配置"
@@ -61,17 +63,20 @@ help:
 	@echo "  TARGET_PORTS    开放端口，空格或逗号分隔（必填，不能为空）"
 	@echo "  WHITELIST_IPS   白名单，空格或逗号分隔（必填，不能为空）"
 	@echo "  EXTERNAL_INTERFACE  出口网卡（可选，默认自动检测）"
+	@echo "  DAYS            make log 统计最近天数（默认 1）"
+	@echo "  BLOCKED_SINCE   自定义时间窗口，如 \"7 days\" / \"24 hours\"（优先于 DAYS）"
 	@echo ""
 	@echo "示例:"
 	@echo "  make enable TARGET_PORTS=\"22 8080\""
 	@echo "  make enable WHITELIST_IPS=\"211.99.216.18,192.168.0.0/16\""
 	@echo "  make enable TARGET_PORTS=22 WHITELIST_IPS=1.2.3.4"
-	@echo "  make h20-43                              # 或 H20-43，端口 22,30001,30002,20000"
-	@echo "  make h20-44                              # 或 H20-44，端口 22,30002,20000"
+	@echo "  make h20-43                              # 或 H20-43，端口 22,30001,30002,2000:10000,20000"
+	@echo "  make h20-44                              # 或 H20-44，端口 22,30002,2000:10000,20000"
 	@echo "  make h100-42                             # 或 H100-42，端口 22,30001"
 	@echo "  make a800-40                             # 或 A800-40，端口 22,9131,9116,10010:10034"
 	@echo "  make a800-43                             # 或 A800-43，端口 22,8080,9111,9116,20170:20172,27171,30008,30009"
-	@echo "  export WHITELIST_IPS=\"10.0.0.1 10.0.0.2\"; make enable"
+	@echo "  make log                                 # 最近 1 天 DOCKER-USER 拦截统计"
+	@echo "  make log DAYS=7                          # 最近 7 天"
 	@echo ""
 	@echo "当前默认值（来自 defaults.env）:"
 	@echo "  TARGET_PORTS=$(TARGET_PORTS)"
@@ -94,8 +99,14 @@ enable:
 disable:
 	@bash "$(SCRIPT)" disable
 
-blocked-ips:
-	@bash "$(SCRIPT)" blocked-ips "$(BLOCKED_LINES)"
+log blocked-ips:
+	@if [[ -n "$(strip $(BLOCKED_SINCE))" ]]; then \
+		BLOCKED_SINCE="$(BLOCKED_SINCE)" bash "$(SCRIPT)" blocked-ips 0; \
+	elif ! [[ "$(DAYS)" =~ ^[0-9]+$$ ]] || [[ "$(DAYS)" -lt 1 ]]; then \
+		echo "错误：DAYS 须为正整数（当前: $(DAYS)）" >&2; exit 1; \
+	else \
+		BLOCKED_SINCE="$(DAYS) days" bash "$(SCRIPT)" blocked-ips 0; \
+	fi
 
 h20-43-dry-run:
 	@$(MAKE) dry-run TARGET_PORTS="$(H20_43_PORTS)" WHITELIST_IPS="$(H20_43_WHITELIST)"
