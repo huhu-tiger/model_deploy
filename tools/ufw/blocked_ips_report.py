@@ -27,7 +27,6 @@ def pad_cell(text: str, width: int) -> str:
 
 
 def print_table(title: str, headers: list[str], rows: list[list[str]]) -> None:
-    col_count = len(headers)
     widths = [display_width(h) for h in headers]
     for row in rows:
         for i, cell in enumerate(row):

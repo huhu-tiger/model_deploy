@@ -181,10 +181,9 @@ configure_docker_user_chain() {
             sudo "$ipt" -A DOCKER-USER -i "$EXTERNAL_INTERFACE" -p tcp \
                 -m conntrack --ctorigdstport "$port" -s "$cidr" -j ACCEPT
         done
-        docker_user_drop_with_log "$ipt" -i "$EXTERNAL_INTERFACE" -p tcp \
-            -m conntrack --ctorigdstport "$port"
     done
 
+    # 统一 DROP 外网入站 TCP（白名单已在上方 ACCEPT，无需 per-port 重复 DROP）
     docker_user_drop_with_log "$ipt" -i "$EXTERNAL_INTERFACE" -p tcp \
         -m conntrack --ctorigdstport 1:65535
 
@@ -283,9 +282,11 @@ cmd_disable() {
 }
 
 grep_docker_drop_logs() {
-    local f=/var/log/kern.log rot
+    local f=/var/log/kern.log
     {
-        [[ -f "$f" ]] && sudo grep -hF "$DOCKER_USER_LOG_PREFIX" "$f" 2>/dev/null || true
+        if [[ -f "$f" ]]; then
+            sudo grep -hF "$DOCKER_USER_LOG_PREFIX" "$f" 2>/dev/null || true
+        fi
         for rot in "$f".* "$f"-*; do
             [[ -e "$rot" ]] || continue
             if [[ "$rot" == *.gz ]]; then
@@ -297,22 +298,43 @@ grep_docker_drop_logs() {
     } | sort -u
 }
 
+format_cutoff_cst() {
+    local cutoff_utc="$1"
+    TZ=Asia/Shanghai date -d "${cutoff_utc} UTC" '+%Y-%m-%dT%H:%M:%S %Z' 2>/dev/null \
+        || echo "${cutoff_utc} CST"
+}
+
 format_since_window() {
-    local since="$1" cutoff="$2"
+    local since="$1" cutoff="$2" cutoff_cst
+    cutoff_cst="$(format_cutoff_cst "$cutoff")"
     if [[ "$since" =~ ^([0-9]+)[[:space:]]+days?$ ]]; then
-        echo "统计窗口: 最近 ${BASH_REMATCH[1]} 天（>= ${cutoff} UTC）"
+        echo "统计窗口: 最近 ${BASH_REMATCH[1]} 天（>= ${cutoff_cst}）"
     elif [[ "$since" =~ ^([0-9]+)[[:space:]]+hours?$ ]]; then
-        echo "统计窗口: 最近 ${BASH_REMATCH[1]} 小时（>= ${cutoff} UTC）"
+        echo "统计窗口: 最近 ${BASH_REMATCH[1]} 小时（>= ${cutoff_cst}）"
     else
-        echo "统计窗口: >= ${cutoff} UTC（BLOCKED_SINCE=${since}）"
+        echo "统计窗口: >= ${cutoff_cst}（BLOCKED_SINCE=${since}）"
     fi
 }
 
-# 将 BLOCKED_SINCE（如 "1 day" / "24 hours" / ISO 时间）转为可比较的 UTC 时间前缀
+# 将 BLOCKED_SINCE（如 "1 day" / "24 hours" / ISO 时间）转为可比较的 UTC 时间前缀（kern.log 为 UTC）
+# ISO 无时区后缀时按中国时区（Asia/Shanghai）理解；带 Z / +00:00 / +08:00 等则按字面解析
 blocked_since_cutoff() {
-    local since="$1" cutoff
+    local since="$1" cutoff normalized
     if [[ "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2} ]]; then
-        echo "${since%%+*}" | sed 's/\..*//'
+        if [[ "$since" =~ [Zz]$|[+-][0-9]{2}:[0-9]{2}$ ]]; then
+            if ! cutoff=$(date -u -d "$since" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null); then
+                echo "错误：无效的 BLOCKED_SINCE=${since}" >&2
+                return 1
+            fi
+        else
+            normalized="${since//T/ }"
+            normalized="${normalized%%.*}"
+            if ! cutoff=$(TZ=Asia/Shanghai date -u -d "${normalized} CST" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null); then
+                echo "错误：无效的 BLOCKED_SINCE=${since}（ISO 示例: 2026-06-30T17:00:00 或 2026-06-30T09:00:00+00:00）" >&2
+                return 1
+            fi
+        fi
+        echo "$cutoff"
         return 0
     fi
     if ! cutoff=$(date -u -d "$since ago" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null); then
@@ -376,11 +398,14 @@ usage() {
   enable        重置并应用 UFW + DOCKER-USER 白名单规则（默认）
   disable       关闭 UFW，清空 DOCKER-USER 自定义规则
   blocked-ips   从 kern.log 汇总 DOCKER-USER 拦截（表格；配合 BLOCKED_SINCE 过滤）
+                ISO 时间无时区时按中国时区理解，统计窗口以中国时区显示
 
 Makefile 示例:
   make log                  最近 1 天拦截统计（表格）
   make log DAYS=3           最近 3 天
   make log BLOCKED_SINCE="24 hours"
+  make log BLOCKED_SINCE="2026-06-30T17:00:00"        # 中国时区
+  make log BLOCKED_SINCE="2026-06-30T09:00:00+00:00"  # 显式 UTC
   make enable TARGET_PORTS="22 8080" WHITELIST_IPS="1.2.3.4,10.0.0.0/8"
 EOF
 }
@@ -400,4 +425,6 @@ main() {
     esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
