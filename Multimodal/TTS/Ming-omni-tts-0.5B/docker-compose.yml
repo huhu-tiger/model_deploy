@@ -1,0 +1,64 @@
+# Ming-omni-tts-0.5B | 单卡双 stage TTS（LLM+flow → Audio VAE）
+# 物理 GPU 默认 6（可通过 NVIDIA_VISIBLE_DEVICES / deploy.device_ids 修改）
+# 最低镜像版本 v0.24.0rc1：v0.22.0 无 ming_tts pipeline，会误走 diffusion 并报
+#   BailingMMNativeForConditionalGeneration not found in diffusion model registry
+# API: POST /v1/audio/speech
+
+services:
+  vllm-ming-omni-tts:
+    image: model.vnet.com/sjhl/vllm-omni:v0.24.0rc1
+    container_name: vllm-ming-omni-tts
+    runtime: nvidia
+    shm_size: "8gb"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${GPU:-6}
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      # 宿主机驱动高于镜像白名单时报错时可取消注释
+      - NVIDIA_DISABLE_REQUIRE=1
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64:/usr/local/cuda/lib64
+      - OMP_NUM_THREADS=1
+    volumes:
+      - /media/llm:/media/llm
+      - ./deploy/ming_tts.yaml:/deploy/ming_tts.yaml:ro
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ports:
+      - "${PORT:-9132}:8091"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    command:
+      - vllm
+      - serve
+      - --model
+      - /media/llm/inclusionAI/Ming-omni-tts-0.5B
+      - --omni
+      - --deploy-config
+      - /deploy/ming_tts.yaml
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8091"
+      - --served-model-name
+      - Ming-omni-tts-0.5B
+      - --tensor-parallel-size
+      - "1"
+      - --enforce-eager
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["${GPU:-6}"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8091/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
