@@ -1,0 +1,59 @@
+# PP-OCRv6 medium | PaddleX 基础服务化（Det + Rec）
+# API: POST /ocr
+# 模型挂载: /media/llm/PaddlePaddle/PP-OCRv6_medium_{det,rec}
+# model_cache: 可选，PaddleX 运行时缓存（非必须）
+
+services:
+  pp-ocrv6-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PADDLEOCR_IMAGE_TAG: ${PADDLEOCR_IMAGE_TAG:-latest-nvidia-gpu-offline}
+    image: pp-ocrv6-api:${PADDLEOCR_IMAGE_TAG:-latest-nvidia-gpu-offline}
+    container_name: pp-ocrv6-api
+    runtime: nvidia
+    shm_size: "8gb"
+    ipc: host
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${GPU:-0}
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_DISABLE_REQUIRE=1
+      - PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
+      - PADDLE_PDX_MODEL_SOURCE=${PADDLE_PDX_MODEL_SOURCE:-BOS}
+    volumes:
+      - /media/llm/PaddlePaddle:/media/llm/PaddlePaddle:ro
+      - ./model_cache:/home/paddleocr/.paddlex
+      - ./OCR.yaml:/deploy/OCR.yaml:ro
+    ports:
+      - "${PORT:-9410}:8080"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    command:
+      - paddlex
+      - --serve
+      - --pipeline
+      - /deploy/OCR.yaml
+      - --device
+      - gpu:0
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8080"
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["${GPU:-0}"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s

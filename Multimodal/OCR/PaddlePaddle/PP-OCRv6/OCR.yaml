@@ -1,0 +1,33 @@
+# 通用 OCR 产线 — PP-OCRv6 medium（检测 + 识别）
+# 检测模型：/media/llm/PaddlePaddle/PP-OCRv6_medium_det
+# 识别模型：/media/llm/PaddlePaddle/PP-OCRv6_medium_rec
+
+pipeline_name: OCR
+
+text_type: general
+
+use_doc_preprocessor: false
+use_textline_orientation: false
+
+SubModules:
+  TextDetection:
+    module_name: text_detection
+    model_name: PP-OCRv6_medium_det
+    model_dir: /media/llm/PaddlePaddle/PP-OCRv6_medium_det
+    limit_side_len: 64
+    limit_type: min
+    max_side_limit: 4000
+    thresh: 0.3
+    box_thresh: 0.6
+    unclip_ratio: 1.5
+  TextRecognition:
+    module_name: text_recognition
+    model_name: PP-OCRv6_medium_rec
+    model_dir: /media/llm/PaddlePaddle/PP-OCRv6_medium_rec
+    batch_size: 6
+    score_thresh: 0.0
+
+Serving:
+  visualize: false
+  extra:
+    max_num_input_imgs: null
