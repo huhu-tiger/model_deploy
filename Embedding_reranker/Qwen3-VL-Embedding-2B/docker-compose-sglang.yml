@@ -1,0 +1,63 @@
+version: '3.9'
+
+# Qwen3-VL-Embedding-2B — 多模态 Embedding（SGLang）
+# 启动: docker compose -f docker-compose-sglang.yml up -d
+# API:  POST http://<host>:6009/v1/embeddings  （宿主机 6009 → 容器内 8019）
+# 与 vLLM 版（8018）二选一或 A/B 对比，勿同时占用同一 GPU
+
+services:
+  sglang-qwen3-vl-embedding-2b:
+    image: model.vnet.com/sjhl/sglang:v0.5.13.post1
+    container_name: sglang-qwen3-vl-embedding-2b
+    runtime: nvidia
+    shm_size: "8gb"
+    ipc: host
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "0"
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      SGLANG_VLM_CACHE_SIZE_MB: "0"
+      OMP_NUM_THREADS: "1"
+    volumes:
+      - /media/llm:/media/llm
+      - /etc/localtime:/etc/localtime
+    ports:
+      - "6009:8019"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8019/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+    command: >
+      python3 -m sglang.launch_server
+      --model-path /media/llm/Qwen/Qwen3-VL-Embedding-2B
+      --served-model-name Qwen3-VL-Embedding-2B
+      --is-embedding
+      --trust-remote-code
+      --chat-template /media/llm/Qwen/Qwen3-VL-Embedding-2B/chat_template.jinja
+      --host 0.0.0.0
+      --port 8019
+      --dtype bfloat16
+      --context-length 8192
+      --mem-fraction-static 0.90
+      --max-running-requests 64
+      --chunked-prefill-size 8192
+      --limit-mm-data-per-request '{"image": 2, "video": 1}'
+      --json-model-override-args '{"matryoshka_dimensions":[2048]}'
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+    restart: unless-stopped
+
+networks:
+  default:
+    driver: bridge
