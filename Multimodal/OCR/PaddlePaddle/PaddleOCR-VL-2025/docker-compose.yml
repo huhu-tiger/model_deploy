@@ -17,4 +17,19 @@ services:
     ports:
       - "8080:8080"   # 将宿主机 8080 映射到容器 8080
     restart: unless-stopped
-    command: /bin/bash -c "tail -f /dev/null"
+    command:
+      - paddlex_genai_server
+      - --model_name
+      - PaddleOCR-VL-0.9B
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --backend
+      - vllm
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/v1/models | grep -q PaddleOCR-VL-0.9B"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
