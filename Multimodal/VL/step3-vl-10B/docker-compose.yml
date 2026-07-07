@@ -1,0 +1,85 @@
+version: "3.9"
+
+# Step3-VL-10B 单卡 A800-80G 生产档（v0.24.0）
+# 官方 vLLM 启动参考: https://huggingface.co/stepfun-ai/Step3-VL-10B
+# 权重 ~20GB + 运行时 ~4GB，单卡 80G 余量充足
+#
+# 注意：v0.24.0 的 Step3-VL 尚未合入 dual-path ViT CUDA Graph（#46034），
+# 开启 cudagraph_mm_encoder 会在大图/分块路径 RuntimeError，暂勿启用。
+# 待镜像升级到含 #46034 的版本后再加 compilation-config。
+
+services:
+  vllm-step3-vl-10b:
+    image: model.vnet.com/sjhl/vllm-openai:v0.24.0
+    container_name: vllm-step3-vl-10b
+    runtime: nvidia
+    shm_size: "16gb"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=4
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_DISABLE_REQUIRE=1
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64:/usr/local/cuda/lib64
+      - VLLM_IMAGE_FETCH_TIMEOUT=60
+      - VLLM_VIDEO_FETCH_TIMEOUT=120
+      - OMP_NUM_THREADS=1
+    volumes:
+      - /media/llm:/media/llm
+    ipc: host
+    ports:
+      - "9118:9118"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    command:
+      - --served-model-name
+      - Step3-VL-10B
+      - --model
+      - /media/llm/stepfun-ai/Step3-VL-10B
+      - --port
+      - "9118"
+      - --host
+      - 0.0.0.0
+      - --trust-remote-code
+      - --tensor-parallel-size
+      - "1"
+      - --dtype
+      - bfloat16
+      - --gpu-memory-utilization
+      - "0.92"
+      - --max-model-len
+      - "32768"
+      - --max-num-seqs
+      - "24"
+      - --max-num-batched-tokens
+      - "16384"
+      - --enable-chunked-prefill
+      - --enable-prefix-caching
+      - --kv-cache-dtype
+      - fp8
+      - --reasoning-parser
+      - deepseek_r1
+      - --enable-auto-tool-choice
+      - --tool-call-parser
+      - hermes
+      - --mm-processor-cache-gb
+      - "2"
+      - --limit-mm-per-prompt.video
+      - "0"
+      - --limit-mm-per-prompt.image
+      - "2"
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["4"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9118/v1/models | grep -q Step3-VL-10B"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 420s
