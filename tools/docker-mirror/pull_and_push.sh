@@ -18,8 +18,10 @@ set -euo pipefail
 REGISTRY="model.vnet.com/sjhl"
 DEFAULT_SKOPEO_PROXY="http://172.22.220.21:20171"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+COMMON_DIR="${SCRIPT_DIR}/common"
 RECORD_FILE="${SCRIPT_DIR}/pushed_images.txt"
 RECORD_LOCK="${RECORD_FILE}.lock"
+DOMESTIC_REGISTRIES_FILE="${DOMESTIC_REGISTRIES_FILE:-${SCRIPT_DIR}/domestic_registries.conf}"
 
 MODE="direct"
 PARALLEL_JOBS=1
@@ -28,6 +30,20 @@ CHECK_REMOTE=0
 SRC_PREFIX="${SRC_PREFIX:-}"
 DOCKER_AUTH_FILE=""
 DEST_TLS_VERIFY="${DEST_TLS_VERIFY:-false}"
+# 国内仓库匹配规则（由 load_domestic_registries 填充）
+DOMESTIC_PATTERNS=()
+DOMESTIC_LOADED=0
+
+# shellcheck source=common/log.sh
+source "${COMMON_DIR}/log.sh"
+# shellcheck source=common/registry.sh
+source "${COMMON_DIR}/registry.sh"
+# shellcheck source=common/proxy.sh
+source "${COMMON_DIR}/proxy.sh"
+# shellcheck source=common/record.sh
+source "${COMMON_DIR}/record.sh"
+# shellcheck source=common/sync.sh
+source "${COMMON_DIR}/sync.sh"
 
 usage() {
     cat <<EOF
@@ -48,16 +64,19 @@ usage() {
   -h, --help           显示此帮助
 
 环境变量:
-  HTTP_PROXY / HTTPS_PROXY / ALL_PROXY   访问 Docker Hub 的代理
-  SKOPEO_PROXY                         专用于 skopeo 的 HTTP 代理（默认 ${DEFAULT_SKOPEO_PROXY}）
+  HTTP_PROXY / HTTPS_PROXY / ALL_PROXY   访问海外源的代理
+  SKOPEO_PROXY                         skopeo 专用代理（默认 ${DEFAULT_SKOPEO_PROXY}；空=不设默认）
   SRC_PREFIX                             同 --src-prefix
+  DOMESTIC_REGISTRIES_FILE               国内仓名单（默认 ${SCRIPT_DIR}/domestic_registries.conf）
   未设置代理时，自动读取 Docker daemon 的 systemd 代理配置
+  源匹配国内仓名单时自动直连，不走代理
 
 示例:
   $(basename "$0") vllm/vllm-openai:v0.22.1
   $(basename "$0") -j 3 -p linux/amd64 nvidia/cuda:12.0.0-base
   $(basename "$0") --src-prefix docker.m.daocloud.io vllm/vllm-openai:v0.22.1
   $(basename "$0") --mode local vllm/vllm-openai:v0.22.1
+  $(basename "$0") swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/myscale/myscaledb:1.6.4
 EOF
     exit 1
 }
@@ -126,148 +145,26 @@ parse_args() {
     IMAGE_ARGS=("$@")
 }
 
-load_proxy_from_docker_daemon() {
-    local conf_dir="/etc/systemd/system/docker.service.d"
-    local conf line key val
-    local loaded=0
-
-    [[ -d "$conf_dir" ]] || return 1
-
-    for conf in "$conf_dir"/*.conf; do
-        [[ -f "$conf" ]] || continue
-        while IFS= read -r line || [[ -n "$line" ]]; do
-            [[ "$line" =~ ^Environment=\"([A-Za-z_]+)=([^\"]+)\"$ ]] || continue
-            key="${BASH_REMATCH[1]}"
-            val="${BASH_REMATCH[2]}"
-            export "${key}=${val}"
-            loaded=1
-        done < "$conf"
-    done
-
-    [[ "$loaded" -eq 1 ]]
-}
-
-ensure_dest_noproxy() {
-    # 目标仓必须直连；代理通常无法访问内网 Harbor
-    local dest_host="${REGISTRY%%/*}"
-    local extra="${dest_host},.${dest_host#*.},localhost,127.0.0.1"
-    local cur="${NO_PROXY:-${no_proxy:-}}"
-    if [[ -z "$cur" ]]; then
-        export NO_PROXY="$extra"
-    elif [[ ",${cur}," != *",${dest_host},"* ]]; then
-        export NO_PROXY="${cur},${extra}"
-    else
-        export NO_PROXY="$cur"
-    fi
-    export no_proxy="${NO_PROXY}"
-}
-
-setup_proxy() {
-    if [[ -z "${SKOPEO_PROXY+x}" ]]; then
-        SKOPEO_PROXY="${DEFAULT_SKOPEO_PROXY}"
-    fi
-
-    if [[ -n "${SKOPEO_PROXY}" ]]; then
-        export HTTP_PROXY="${SKOPEO_PROXY}"
-        export HTTPS_PROXY="${SKOPEO_PROXY}"
-        unset ALL_PROXY all_proxy
-        log "" "使用 SKOPEO_PROXY: ${HTTP_PROXY}"
-    elif [[ -z "${HTTP_PROXY:-}" && -z "${HTTPS_PROXY:-}" && -z "${ALL_PROXY:-}" ]]; then
-        if load_proxy_from_docker_daemon; then
-            log "" "已从 Docker daemon 加载代理: ${HTTP_PROXY:-${ALL_PROXY:-unknown}}"
-        fi
-    fi
-
-    if [[ -n "${HTTP_PROXY:-}${HTTPS_PROXY:-}${ALL_PROXY:-}${SKOPEO_PROXY:-}" ]]; then
-        ensure_dest_noproxy
-        log "" "NO_PROXY: ${NO_PROXY}"
-    fi
-
-    if [[ -n "${HTTP_PROXY:-}" ]]; then
-        export http_proxy="${HTTP_PROXY}"
-    fi
-    if [[ -n "${HTTPS_PROXY:-}" ]]; then
-        export https_proxy="${HTTPS_PROXY}"
-    fi
-    if [[ -n "${NO_PROXY:-}" ]]; then
-        export no_proxy="${NO_PROXY}"
-    fi
-
-    if [[ -z "${ALL_PROXY:-}" && -n "${HTTP_PROXY:-}" && "${HTTP_PROXY}" == socks5://* ]]; then
-        export ALL_PROXY="${HTTP_PROXY}"
-        export all_proxy="${HTTP_PROXY}"
-        log "" "提示: skopeo 对 SOCKS5 支持有限，若失败请 setproxy 或设置 SKOPEO_PROXY=http://..." >&2
-    fi
-    if [[ -n "${ALL_PROXY:-}" ]]; then
-        export all_proxy="${ALL_PROXY}"
-    fi
-}
-
-resolve_docker_authfile() {
-    if [[ -n "${DOCKER_CONFIG:-}" && -f "${DOCKER_CONFIG}/config.json" ]]; then
-        DOCKER_AUTH_FILE="${DOCKER_CONFIG}/config.json"
-    elif [[ -f "${HOME}/.docker/config.json" ]]; then
-        DOCKER_AUTH_FILE="${HOME}/.docker/config.json"
-    else
-        DOCKER_AUTH_FILE=""
-    fi
-}
-
-resolve_src_ref() {
-    local src="$1"
-    local prefix="${SRC_PREFIX:-}"
-
-    if [[ -z "$prefix" ]]; then
-        echo "$src"
-        return 0
-    fi
-
-    prefix="${prefix#docker://}"
-    prefix="${prefix%/}"
-    src="${src#docker.io/}"
-    src="${src#registry-1.docker.io/}"
-    echo "${prefix}/${src}"
-}
-
-append_skopeo_dest_args() {
-    local -n _args=$1
-    if [[ "${DEST_TLS_VERIFY}" != "true" ]]; then
-        _args+=(--dest-tls-verify=false)
-    fi
-}
-
-append_skopeo_auth_args() {
-    local -n _args=$1
-    if [[ -n "$DOCKER_AUTH_FILE" ]]; then
-        _args+=(--src-authfile "$DOCKER_AUTH_FILE" --dest-authfile "$DOCKER_AUTH_FILE")
-    fi
-}
-
-skopeo_inspect_dest() {
-    local dest="$1"
-    local -a args=(inspect)
-
-    if [[ "${DEST_TLS_VERIFY}" != "true" ]]; then
-        args+=(--tls-verify=false)
-    fi
-
-    skopeo "${args[@]}" "docker://${dest}"
-}
-
 ensure_dependencies() {
     if [[ "$MODE" == "direct" ]]; then
         if ! command -v skopeo >/dev/null 2>&1; then
             echo "错误: direct 模式需要 skopeo，请安装: sudo apt install skopeo" >&2
             exit 1
         fi
+        load_domestic_registries "$DOMESTIC_REGISTRIES_FILE" || true
+        if [[ ${#DOMESTIC_PATTERNS[@]} -gt 0 ]]; then
+            log "" "国内仓规则: ${#DOMESTIC_PATTERNS[@]} 条（${DOMESTIC_REGISTRIES_FILE}）"
+        fi
         setup_proxy
         resolve_docker_authfile
         if [[ -z "${HTTP_PROXY:-}${HTTPS_PROXY:-}${ALL_PROXY:-}" ]]; then
-            echo "警告: 未检测到代理，访问 Docker Hub 可能超时；可先执行 setproxy 或设置 HTTP_PROXY" >&2
+            echo "警告: 未检测到代理，访问 Docker Hub / ghcr 等海外源可能超时" >&2
         fi
     elif ! command -v docker >/dev/null 2>&1; then
         echo "错误: local 模式需要 docker" >&2
         exit 1
+    else
+        load_domestic_registries "$DOMESTIC_REGISTRIES_FILE" || true
     fi
 }
 
@@ -285,205 +182,6 @@ collect_images() {
             fi
         done
     done
-}
-
-to_local_image() {
-    local src="$1"
-    local image_part tag image_name
-
-    if [[ "$src" == *@* ]]; then
-        echo "错误: 暂不支持带 digest 的镜像引用: $src" >&2
-        return 1
-    fi
-
-    if [[ "$src" == *:* ]]; then
-        tag="${src##*:}"
-        image_part="${src%:*}"
-    else
-        tag="latest"
-        image_part="$src"
-    fi
-
-    image_name="${image_part##*/}"
-    echo "${REGISTRY}/${image_name}:${tag}"
-}
-
-log() {
-    local src="${1:-}"
-    shift || true
-    if [[ -n "$src" ]]; then
-        echo "[${src}] $*"
-    else
-        echo "$*"
-    fi
-}
-
-is_recorded() {
-    local dest="$1"
-    [[ -f "$RECORD_FILE" ]] && grep -qxF "$dest" "$RECORD_FILE"
-}
-
-is_remote_exists() {
-    local dest="$1"
-    if [[ "$MODE" == "direct" ]]; then
-        skopeo_inspect_dest "$dest" >/dev/null 2>&1
-    else
-        docker manifest inspect "$dest" >/dev/null 2>&1
-    fi
-}
-
-record_image() {
-    local dest="$1"
-    (
-        flock -x 9
-        grep -qxF "$dest" "$RECORD_FILE" 2>/dev/null || echo "$dest" >> "$RECORD_FILE"
-    ) 9>>"$RECORD_LOCK"
-}
-
-should_skip() {
-    local src="$1"
-    local dest="$2"
-
-    if is_recorded "$dest"; then
-        log "$src" "跳过: $src -> $dest （已在 $RECORD_FILE 中）"
-        return 0
-    fi
-
-    if [[ "$CHECK_REMOTE" -eq 1 ]] && is_remote_exists "$dest"; then
-        log "$src" "跳过: $src -> $dest （目标仓库已存在，写入记录）"
-        record_image "$dest"
-        return 0
-    fi
-
-    return 1
-}
-
-append_skopeo_platform_args() {
-    local -n _args=$1
-    local plat="$2"
-    local os arch rest
-
-    if [[ -z "$plat" ]]; then
-        return 0
-    fi
-
-    if [[ "$plat" != */* ]]; then
-        echo "错误: 平台格式须为 os/arch（如 linux/amd64），当前: $plat" >&2
-        return 1
-    fi
-
-    os="${plat%%/*}"
-    rest="${plat#*/}"
-    arch="${rest%%/*}"
-
-    _args+=(--override-os "$os" --override-arch "$arch")
-
-    if [[ "$rest" == */* ]]; then
-        _args+=(--override-variant "${rest#*/}")
-    fi
-}
-
-docker_pull() {
-    local src="$1"
-    local -a args=(pull)
-
-    if [[ -n "$PLATFORM" ]]; then
-        args+=(--platform "$PLATFORM")
-    fi
-
-    docker "${args[@]}" "$src"
-}
-
-process_image_local() {
-    local src="$1"
-    local dest
-    local start_ts elapsed
-
-    dest="$(to_local_image "$src")" || return 1
-    start_ts=$(date +%s)
-
-    log "$src" "========================================"
-    log "$src" "模式:     local (docker pull/tag/push)"
-    log "$src" "源镜像:   $src"
-    log "$src" "目标镜像: $dest"
-    [[ -n "$PLATFORM" ]] && log "$src" "平台:     $PLATFORM"
-    log "$src" "========================================"
-
-    log "$src" "[1/4] docker pull $src"
-    if ! docker_pull "$src"; then
-        log "$src" "错误: pull 失败: $src" >&2
-        return 1
-    fi
-
-    log "$src" "[2/4] docker tag $src $dest"
-    if ! docker tag "$src" "$dest"; then
-        log "$src" "错误: tag 失败: $src -> $dest" >&2
-        return 1
-    fi
-
-    log "$src" "[3/4] docker push $dest"
-    if ! docker push "$dest"; then
-        log "$src" "错误: push 失败: $dest" >&2
-        return 1
-    fi
-
-    record_image "$dest"
-    log "$src" "已记录: $dest -> $RECORD_FILE"
-
-    log "$src" "[4/4] docker rmi -f $dest $src"
-    if ! docker rmi -f "$dest" "$src"; then
-        log "$src" "警告: 删除本地镜像失败（推送已成功）: $dest, $src" >&2
-    else
-        log "$src" "已删除本地镜像: $dest, $src"
-    fi
-
-    elapsed=$(( $(date +%s) - start_ts ))
-    log "$src" "完成，耗时 ${elapsed}s"
-}
-
-process_image_direct() {
-    local src="$1"
-    local dest
-    local skopeo_src
-    local start_ts elapsed
-    local -a copy_args=(copy --retry-times 3)
-
-    dest="$(to_local_image "$src")" || return 1
-    skopeo_src="$(resolve_src_ref "$src")"
-    append_skopeo_platform_args copy_args "$PLATFORM" || return 1
-    append_skopeo_auth_args copy_args
-    append_skopeo_dest_args copy_args
-    start_ts=$(date +%s)
-
-    log "$src" "========================================"
-    log "$src" "模式:     direct (skopeo copy，不落盘)"
-    log "$src" "源镜像:   docker://${skopeo_src}"
-    log "$src" "目标镜像: docker://${dest}"
-    [[ -n "$PLATFORM" ]] && log "$src" "平台:     $PLATFORM"
-    [[ -n "${HTTP_PROXY:-}" ]] && log "$src" "代理:     ${HTTP_PROXY}"
-    [[ -n "$SRC_PREFIX" && "$skopeo_src" != "$src" ]] && log "$src" "原始源:   $src"
-    log "$src" "========================================"
-
-    log "$src" "[1/1] skopeo copy docker://${skopeo_src} docker://${dest}"
-    if ! skopeo "${copy_args[@]}" "docker://${skopeo_src}" "docker://${dest}"; then
-        log "$src" "错误: skopeo copy 失败: $src -> $dest" >&2
-        log "$src" "提示: 若 TLS 超时，请先 setproxy 或使用 --src-prefix 指定镜像站" >&2
-        return 1
-    fi
-
-    record_image "$dest"
-    log "$src" "已记录: $dest -> $RECORD_FILE"
-
-    elapsed=$(( $(date +%s) - start_ts ))
-    log "$src" "完成，耗时 ${elapsed}s"
-}
-
-process_image() {
-    if [[ "$MODE" == "direct" ]]; then
-        process_image_direct "$1"
-    else
-        process_image_local "$1"
-    fi
 }
 
 run_image() {
@@ -528,7 +226,8 @@ main() {
 
     touch "$RECORD_FILE"
     STATS_DIR=$(mktemp -d)
-    trap 'rm -rf "$STATS_DIR"' EXIT
+    # STATS_DIR / RECORD_LOCK 均为临时资源；正常退出、错误退出、Ctrl+C 均清理
+    trap 'rm -rf "${STATS_DIR:-}"; rm -f "${RECORD_LOCK:-}"' EXIT INT TERM
 
     local failed=0
     local image

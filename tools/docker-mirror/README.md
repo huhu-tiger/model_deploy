@@ -6,9 +6,16 @@
 
 ```
 tools/docker-mirror/
-├── Makefile            # 命令封装
-├── pull_and_push.sh    # 主脚本
-├── pushed_images.txt   # 推送成功记录（自动追加）
+├── Makefile                     # 命令封装
+├── pull_and_push.sh             # 入口：CLI 与编排
+├── domestic_registries.conf     # 国内/内网仓名单（直连不走代理）
+├── common/                      # 可 source 的库（勿直接执行）
+│   ├── log.sh                   # 日志
+│   ├── registry.sh              # 引用解析、国内仓匹配、命名
+│   ├── proxy.sh                 # 代理 / NO_PROXY / run_skopeo
+│   ├── record.sh                # 推送记录与跳过
+│   └── sync.sh                  # direct / local 单镜像同步
+├── pushed_images.txt            # 推送成功记录（自动追加）
 └── README.md
 ```
 
@@ -156,12 +163,17 @@ make push CHECK_REMOTE=1 IMAGE=nvidia/cuda:12.0.0-base
 | `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` | 通用代理 |
 | `SRC_PREFIX` | 同 `--src-prefix` |
 | `DEST_TLS_VERIFY` | 目标仓库 TLS 校验，默认 `false`（内网自签证书） |
+| `DOMESTIC_REGISTRIES_FILE` | 国内仓名单路径，默认 `./domestic_registries.conf` |
 
 代理加载顺序（direct 模式）：
 
-1. `SKOPEO_PROXY`（未设置时使用默认 `http://172.22.220.21:20171`；设为空则跳过）
+1. `SKOPEO_PROXY`（未设置时使用默认；设为空则跳过默认，可回退到 shell / Docker daemon）
 2. 当前 shell 的 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`
 3. `/etc/systemd/system/docker.service.d/*.conf` 中 Docker daemon 代理
+
+源仓库若匹配 `domestic_registries.conf`（华为云 / 阿里云 / DaoCloud / `*.vnet.com` 等），该次 `skopeo` **清除代理直连**；目标仓 `model.vnet.com` 始终加入 `NO_PROXY`。
+
+编辑 `domestic_registries.conf` 即可增删规则（支持 `*.example.com`、`.example.com`、精确域名）。
 
 ## 网络与代理
 
