@@ -147,6 +147,21 @@ load_proxy_from_docker_daemon() {
     [[ "$loaded" -eq 1 ]]
 }
 
+ensure_dest_noproxy() {
+    # 目标仓必须直连；代理通常无法访问内网 Harbor
+    local dest_host="${REGISTRY%%/*}"
+    local extra="${dest_host},.${dest_host#*.},localhost,127.0.0.1"
+    local cur="${NO_PROXY:-${no_proxy:-}}"
+    if [[ -z "$cur" ]]; then
+        export NO_PROXY="$extra"
+    elif [[ ",${cur}," != *",${dest_host},"* ]]; then
+        export NO_PROXY="${cur},${extra}"
+    else
+        export NO_PROXY="$cur"
+    fi
+    export no_proxy="${NO_PROXY}"
+}
+
 setup_proxy() {
     if [[ -z "${SKOPEO_PROXY+x}" ]]; then
         SKOPEO_PROXY="${DEFAULT_SKOPEO_PROXY}"
@@ -161,6 +176,11 @@ setup_proxy() {
         if load_proxy_from_docker_daemon; then
             log "" "已从 Docker daemon 加载代理: ${HTTP_PROXY:-${ALL_PROXY:-unknown}}"
         fi
+    fi
+
+    if [[ -n "${HTTP_PROXY:-}${HTTPS_PROXY:-}${ALL_PROXY:-}${SKOPEO_PROXY:-}" ]]; then
+        ensure_dest_noproxy
+        log "" "NO_PROXY: ${NO_PROXY}"
     fi
 
     if [[ -n "${HTTP_PROXY:-}" ]]; then
