@@ -45,3 +45,15 @@ model_test/outputs
 model_test/Guard/output/
 LLM/Qwen/Qwen3-Coder-30B-A3B-GGUF/test/
 tools/docker-mirror/pushed_images.txt
+*.mp4
+*.mp3
+*.wav
+*.ogg
+*.flac
+*.m4a
+*.m4b
+*.m4p
+*.m4v
+*.m4s
+*.m4r
+*.m4b

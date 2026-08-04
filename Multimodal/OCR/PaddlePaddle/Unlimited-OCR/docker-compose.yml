@@ -1,0 +1,46 @@
+services:
+  unlimited-ocr:
+    # 官方 vLLM Unlimited-OCR 镜像（CUDA 13.0，适配 A800/Ampere）
+    # Hopper GPU 可改用：vllm/vllm-openai:unlimited-ocr-cu129
+    # 参考：https://recipes.vllm.ai/baidu/Unlimited-OCR
+    image: vllm/vllm-openai:unlimited-ocr
+    container_name: unlimited-ocr-vllm-server
+    runtime: nvidia
+    # 勿开 privileged：会暴露全部 GPU，导致落到已占满的 cuda:0
+    user: "0:0"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=4
+    volumes:
+      - /media/llm/PaddlePaddle/Unlimited-OCR:/media/llm/PaddlePaddle/Unlimited-OCR
+    ipc: host
+    shm_size: "8gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ports:
+      - "30010:8081"
+    command: >
+      /media/llm/PaddlePaddle/Unlimited-OCR
+      --served-model-name Unlimited-OCR
+      --trust-remote-code
+      --logits_processors vllm.model_executor.models.unlimited_ocr:NGramPerReqLogitsProcessor
+      --no-enable-prefix-caching
+      --mm-processor-cache-gb 0
+      --max-model-len 32768
+      --gpu-memory-utilization 0.7
+      --host 0.0.0.0
+      --port 8081
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["4"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 180s
