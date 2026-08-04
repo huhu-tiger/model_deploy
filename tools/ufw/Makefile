@@ -52,7 +52,7 @@ help:
 	@echo "  make h20-43-dry-run | make H20-43-dry-run    预览 h20-43 配置"
 	@echo "  make h20-44 | make H20-44                    主机预设：端口 22 30002 2000:10000 20000，白名单=默认"
 	@echo "  make h20-44-dry-run | make H20-44-dry-run    预览 h20-44 配置"
-	@echo "  make h100-42 | make H100-42                    主机预设：端口 22 30001，白名单=默认"
+	@echo "  make h100-42 | make H100-42                    主机预设：端口 22 30001，白名单=默认+183.*.*.*"
 	@echo "  make h100-42-dry-run | make H100-42-dry-run    预览 H100-42 配置"
 	@echo "  make a800-40 | make A800-40                  主机预设：端口 22 9131 9116 10010:10034（/home/taojun/ufw.sh）"
 	@echo "  make a800-40-dry-run | make A800-40-dry-run  预览 A800-40 配置"
