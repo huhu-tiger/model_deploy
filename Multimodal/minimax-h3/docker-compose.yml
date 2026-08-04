@@ -1,0 +1,82 @@
+version: "3.9"
+
+# MiniMax-H3 FL2VA | 4×A800-80G | T2VA / FL2VA（文生/首尾帧 → 视频+立体声音频）
+# 镜像: model.vnet.com/sjhl/vllm-omni:minimax-h3
+# 权重根目录: /media/llm/MiniMax/MiniMax-H3/（本服务加载 FL2VA 分区）
+# 官方: https://recipes.vllm.ai/MiniMaxAI/MiniMax-H3
+# 绑卡写法对齐 Qwen-Image-2512：NVIDIA_VISIBLE_DEVICES + device_ids，勿加 privileged
+# 注意：官方 --usp 4 面向 B300/H200；USP 会整模复制 DiT(66GB)/卡，A800-80G 必须改 TP 分片
+
+services:
+  vllm-minimax-h3-fl2va:
+    image: model.vnet.com/sjhl/vllm-omni:minimax-h3
+    container_name: vllm-minimax-h3-fl2va
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=4,5,6,7
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - NVIDIA_DISABLE_REQUIRE=1   # 宿主机驱动 590.44 超出镜像声明的兼容白名单(<=570)，跳过约束检查
+      # 宿主机驱动 590.44，但容器 compat 层为 575.57，ldconfig 优先加载了 compat/libcuda.so.575
+      # 导致内核驱动(590) 与用户态库(575) 版本不匹配 → Error 803
+      # 修复：将真实宿主机驱动路径置于 LD_LIBRARY_PATH 最前，覆盖 compat 层
+      - LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/nvidia/lib64:/usr/local/cuda/lib64
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - VLLM_OMNI_VIDEO_SYNC_TIMEOUT=1800
+      - OMP_NUM_THREADS=1
+    volumes:
+      - /media/llm:/media/llm
+      - /media/llm/cache/minimax-h3:/root/.cache/huggingface
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ports:
+      - "9111:8000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    # 显式 argv 启动，避免 "vllm serve" 被误解析为单个可执行文件名
+    command:
+      - vllm
+      - serve
+      - /media/llm/MiniMax/MiniMax-H3/FL2VA
+      - --trust-remote-code
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --num-gpus
+      - "4"
+      # A800-80G：用 TP 切开 DiT，勿用纯 USP（USP 每卡复制完整 66.3GB DiT）
+      - --tensor-parallel-size
+      - "4"
+      - --usp
+      - "1"
+      - --ring
+      - "1"
+      - --text-encoder-tp-size
+      - "4"
+      - --vae-patch-parallel-size
+      - "4"
+      - --vae-parallel-mode
+      - tile
+      - --vae-use-tiling
+      - --diffusion-attention-backend
+      - FLASH_ATTN
+      - --omni
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["4", "5", "6", "7"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 600s
