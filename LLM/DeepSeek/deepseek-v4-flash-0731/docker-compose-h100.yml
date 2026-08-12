@@ -1,10 +1,13 @@
 # DeepSeek-V4-Flash-0731 — SGLang 0.5.17 — H100 + OpenResty 代理
 # Reference: https://docs.sglang.io/cookbook/autoregressive/DeepSeek/DeepSeek-V4
-#   hw=h100&variant=flash-official&quant=fp4&strategy=high-throughput&nodes=single
-# Hardware: H100 × 8 | Flash Official 0731（expert=FP4 → marlin）| context=256K
+#   hw=h100&variant=flash-official&quant=fp4&strategy=low-latency（长上下文，防 OOM）
+# Hardware: H100 × 8 | Flash Official 0731（expert=FP4 → marlin）| context=256K + DSPARK
 # 权重: /media/llm/deepseek-ai/DeepSeek-V4-Flash-0731
 # 镜像: model.vnet.com/sjhl/sglang:v0.5.17
 # 对外: nginx :30001 → 后端 host:30003（与 GLM nginx 端口一致）
+#
+# OOM 说明：长文 prefill indexer 峰值约需额外 ~2GiB；mem-fraction 过高会被 KV/图占满。
+# 故压低 mem-fraction / chunk / dspark-block / concurrency，给 activation 留余量。
 
 services:
   nginx-llm-proxy:
@@ -31,13 +34,15 @@ services:
       --trust-remote-code
       --model-path /models/DeepSeek-V4-Flash-0731
       --context-length 262144
-      --mem-fraction-static 0.85
+      --mem-fraction-static 0.80
       --tp 8
       --moe-runner-backend marlin
+      --speculative-algorithm DSPARK
+      --speculative-dspark-block-size 3
       --swa-full-tokens-ratio 0.1
       --chunked-prefill-size 8192
-      --cuda-graph-max-bs 128
-      --max-running-requests 128
+      --cuda-graph-max-bs 32
+      --max-running-requests 16
       --enable-metrics
       --tool-call-parser deepseekv4
       --reasoning-parser deepseek-v4
@@ -46,6 +51,7 @@ services:
     environment:
       NVIDIA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
       SGLANG_DG_CACHE_DIR: "/root/.cache/deepseek-v4-flash-0731-cache"
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
       NCCL_DEBUG: "warn"
     volumes:
       - /media/llm/deepseek-ai/DeepSeek-V4-Flash-0731:/models/DeepSeek-V4-Flash-0731:ro
@@ -62,7 +68,7 @@ services:
       interval: 60s
       timeout: 5s
       retries: 3
-      start_period: 900s
+      start_period: 1200s
     deploy:
       resources:
         reservations:
