@@ -80,6 +80,10 @@ services:
       - /media/llm/deepseek-ai/DeepSeek-V4-Flash-0731:/models/DeepSeek-V4-Flash-0731:ro
       - /media/llm/deepseek-v4-flash-0731-cache:/root/.cache/deepseek-v4-flash-0731-cache
       - /etc/localtime:/etc/localtime
+      # Backport https://github.com/sgl-project/sglang/pull/34600 onto v0.5.17
+      # （PR 未合入官方镜像；覆盖 streaming tool-call / reasoning parser）
+      - ./sglang-patches/deepseekv32_detector.py:/sgl-workspace/sglang/python/sglang/srt/function_call/deepseekv32_detector.py:ro
+      - ./sglang-patches/reasoning_parser.py:/sgl-workspace/sglang/python/sglang/srt/parser/reasoning_parser.py:ro
     # py-spy / 崩溃栈 dump 需要 ptrace；否则只有 Permission denied
     cap_add:
       - SYS_PTRACE
