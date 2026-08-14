@@ -28,7 +28,7 @@ PORTS_LIST     := $(strip $(subst $(comma),$(space),$(TARGET_PORTS)))
 export TARGET_PORTS := $(PORTS_LIST)
 export WHITELIST_IPS := $(WHITELIST_LIST)
 
-.PHONY: help enable disable status dry-run log blocked-ips \
+.PHONY: help enable disable docker-bridges status dry-run log blocked-ips \
 	h20-43 h20-43-dry-run H20-43 H20-43-dry-run \
 	h20-44 h20-44-dry-run H20-44 H20-44-dry-run \
 	h100-42 h100-42-dry-run H100-42 H100-42-dry-run \
@@ -44,6 +44,7 @@ help:
 	@echo "用法:"
 	@echo "  make enable                              应用规则并启用 UFW（默认仅开放 22/SSH）"
 	@echo "  make disable                             关闭 UFW，恢复 DOCKER-USER"
+	@echo "  make docker-bridges                      仅补齐网桥规则（不 reset；host 与网桥均兼容）"
 	@echo "  make status                              查看 UFW / DOCKER-USER 状态"
 	@echo "  make log                                 查看最近拦截（默认最近 1 天，表格汇总）"
 	@echo "  make log DAYS=3                          查看最近 3 天拦截统计"
@@ -98,6 +99,9 @@ enable:
 
 disable:
 	@bash "$(SCRIPT)" disable
+
+docker-bridges:
+	@bash "$(SCRIPT)" docker-bridges
 
 log blocked-ips:
 	@if [[ -n "$(strip $(BLOCKED_SINCE))" ]]; then \

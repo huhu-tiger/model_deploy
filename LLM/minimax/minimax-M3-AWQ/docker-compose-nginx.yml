@@ -1,13 +1,11 @@
 services:
   nginx-llm-proxy:
     # 使用 OpenResty 以便用 Lua 在 rewrite 阶段读请求体并写入日志变量（标准 nginx 的 $request_body 在 proxy 场景不生效）
+    # network_mode: host：避免 UFW 拦截 docker bridge → 宿主机 30003
     image: model.vnet.com/sjhl/openresty:1.27.1.2-0-alpine
     container_name: nginx-minimax-m3-proxy
     restart: unless-stopped
-    ports:
-      - "30001:80"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"   # 让 nginx 容器能访问宿主机上的 minimax-m3-awq-int4-vllm
+    network_mode: host
     user: "0:0"
     environment:
       TZ: Asia/Shanghai
@@ -27,7 +25,7 @@ services:
     runtime: nvidia
     command: >
       /media/llm/cyankiwi/MiniMax-M3-AWQ-INT4
-      --served-model-name WanWu/MiniMax-M3
+      --served-model-name WanWu/MiniMax-Auto
       --host 0.0.0.0
       --port 30003
       --tensor-parallel-size 8

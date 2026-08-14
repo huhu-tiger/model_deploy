@@ -168,6 +168,12 @@ configure_docker_user_chain() {
     sudo "$ipt" -F DOCKER-USER
     sudo "$ipt" -A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
 
+    # 仅放行「从网桥进来」的 FORWARD（容器出网 / 容器互访）。
+    # 禁止 -o docker0/br-+ RETURN：外网访问 ports: 映射的路径是 in=外网卡 out=br-*，
+    # 若 -o 放行会绕过下方白名单，把容器端口暴露到公网。
+    sudo "$ipt" -A DOCKER-USER -i docker0 -j RETURN
+    sudo "$ipt" -A DOCKER-USER -i br-+ -j RETURN
+
     local port ip cidr has_v6_rule=false
     for port in $TARGET_PORTS; do
         for ip in "${WHITELIST_IPS[@]}"; do
@@ -196,14 +202,45 @@ configure_docker_user_chain() {
     fi
 }
 
+# Docker 网桥 → 宿主机 INPUT：host 网络与 bridge（host.docker.internal）都放行
+# br-+ 通配 enable 之后新建的 compose 网桥（原先只写死当时已有的 br-xxx，新网桥会被 deny incoming 丢掉）
 allow_docker_bridges() {
-    local iface
-    while IFS= read -r iface; do
-        [[ -z "$iface" ]] && continue
-        echo "允许 Docker 网桥: $iface"
-        sudo ufw allow in  on "$iface"
-        sudo ufw allow out on "$iface"
-    done < <(detect_docker_interfaces)
+    echo "允许 Docker 网桥与宿主机互通（docker0 + br-* 通配）"
+    local spec
+    for spec in docker0 br-+; do
+        echo "  UFW: allow in/out on $spec"
+        sudo ufw allow in  on "$spec" comment 'docker-bridge-host'
+        sudo ufw allow out on "$spec" comment 'docker-bridge-host'
+    done
+}
+
+# 不 reset UFW：补 -i 网桥 RETURN；若存在会绕过白名单的 -o 规则则删除
+ensure_docker_user_bridge_return() {
+    local ipt="$1"
+    if ! sudo "$ipt" -L DOCKER-USER -n &>/dev/null; then
+        echo "警告：$ipt DOCKER-USER 链不存在，跳过网桥 RETURN" >&2
+        return 0
+    fi
+    local spec
+    for spec in docker0 br-+; do
+        while sudo "$ipt" -C DOCKER-USER -o "$spec" -j RETURN 2>/dev/null; do
+            sudo "$ipt" -D DOCKER-USER -o "$spec" -j RETURN
+            echo "  $ipt DOCKER-USER: 已删除 RETURN -o $spec（避免绕过白名单）"
+        done
+        if sudo "$ipt" -C DOCKER-USER -i "$spec" -j RETURN 2>/dev/null; then
+            continue
+        fi
+        sudo "$ipt" -I DOCKER-USER 2 -i "$spec" -j RETURN
+        echo "  $ipt DOCKER-USER: RETURN -i $spec"
+    done
+}
+
+cmd_docker_bridges() {
+    echo "补齐 Docker 网桥规则（不重置 UFW / 不改白名单）"
+    allow_docker_bridges
+    ensure_docker_user_bridge_return "iptables"
+    ensure_docker_user_bridge_return "ip6tables"
+    echo "完成：host 网络与网桥（host.docker.internal）均可访问宿主机端口"
 }
 
 cmd_enable() {
@@ -254,6 +291,7 @@ cmd_enable() {
     echo "  - TARGET_PORTS（${TARGET_PORTS}）：仅白名单 IP 可从外网访问"
     echo "  - 其他所有入站端口：拒绝"
     echo "  - 本机与容器访问公网：不受限制"
+    echo "  - Docker 网桥（docker0 / br-*）：与宿主机互通，host 网络与 host.docker.internal 均可用"
     echo ""
     sudo ufw status verbose
     echo ""
@@ -393,12 +431,13 @@ cmd_blocked_ips() {
 
 usage() {
     cat <<EOF
-用法: $0 <enable|disable|blocked-ips [N]|log [N]>
+用法: $0 <enable|disable|docker-bridges|blocked-ips [N]|log [N]>
 
-  enable        重置并应用 UFW + DOCKER-USER 白名单规则（默认）
-  disable       关闭 UFW，清空 DOCKER-USER 自定义规则
-  blocked-ips   从 kern.log 汇总 DOCKER-USER 拦截（表格；配合 BLOCKED_SINCE 过滤）
-                ISO 时间无时区时按中国时区理解，统计窗口以中国时区显示
+  enable         重置并应用 UFW + DOCKER-USER 白名单规则（默认）
+  disable        关闭 UFW，清空 DOCKER-USER 自定义规则
+  docker-bridges 仅补齐 Docker 网桥规则（不 reset，host 与网桥均兼容）
+  blocked-ips    从 kern.log 汇总 DOCKER-USER 拦截（表格；配合 BLOCKED_SINCE 过滤）
+                 ISO 时间无时区时按中国时区理解，统计窗口以中国时区显示
 
 Makefile 示例:
   make log                  最近 1 天拦截统计（表格）
@@ -415,6 +454,7 @@ main() {
     case "$action" in
         enable)  cmd_enable ;;
         disable) cmd_disable ;;
+        docker-bridges) cmd_docker_bridges ;;
         blocked-ips) cmd_blocked_ips "${2:-50}" ;;
         -h|--help|help) usage ;;
         *)
