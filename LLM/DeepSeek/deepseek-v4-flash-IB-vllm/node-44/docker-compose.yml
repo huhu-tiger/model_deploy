@@ -1,0 +1,90 @@
+# DeepSeek-V4-Flash-0731 — vLLM 0.25.0 — 双节点 16 卡 H20 + IB
+# 官方 recipe: https://recipes.vllm.ai/deepseek-ai/DeepSeek-V4-Flash
+# node-44: worker（rank 1，--headless），纯计算，不对外提供 HTTP
+# 参数须与 node-43 一致（仅 rank / hostname / --headless 不同）
+# DP=2 + TP=8 + EP（不能 TP=16，见 node-43 注释）
+# 必须和 node-43 几乎同时启动，不能等 43 的 master-port 就绪再起本节点
+# （否则死锁，见 node-43 注释 / run.sh）
+# 镜像 0.25.0；不开 DSpark（见 node-43 注释 / readme）
+# --no-enable-prefix-caching 须与 43 一致（长上下文提前 EOS）
+# vllm-patches 须与 43 一致（盖住 Debian sitecustomize + .pth）
+
+services:
+  deepseek-v4-flash-vllm:
+    image: ${DOCKER_IMAGE:-vllm/vllm-openai:v0.25.0}
+    container_name: deepseek-v4-flash-vllm
+    hostname: ${WORKER_HOSTNAME}
+    restart: unless-stopped
+    runtime: nvidia
+    command: >
+      /media/llm/deepseek-ai/DeepSeek-V4-Flash-0731
+      --served-model-name WanWu/Deepseek-Auto
+      --trust-remote-code
+      --kv-cache-dtype fp8
+      --block-size 256
+      --max-model-len 393216
+      --enable-expert-parallel
+      --tensor-parallel-size 8
+      --data-parallel-size 2
+      --nnodes 2
+      --node-rank 1
+      --headless
+      --master-addr ${MASTER_IP}
+      --master-port ${MASTER_DIST_PORT}
+      --distributed-executor-backend mp
+      --distributed-timeout-seconds 3600
+      --tokenizer-mode deepseek_v4
+      --tool-call-parser deepseek_v4
+      --enable-auto-tool-choice
+      --reasoning-parser deepseek_v4
+      --reasoning-config '{"reasoning_parser":"deepseek_v4","reasoning_start_str":"","reasoning_end_str":""}'
+      --max-num-batched-tokens 8192
+      --no-enable-flashinfer-autotune
+      --enable-ep-weight-filter
+      --no-enable-prefix-caching
+    environment:
+      TZ: Asia/Shanghai
+      NVIDIA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+      CUDA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+      VLLM_HOST_IP: "${WORKER_IP}"
+      VLLM_USE_MODELSCOPE: "false"
+      NCCL_IB_DISABLE: "0"
+      NCCL_IB_HCA: "mlx5_0,mlx5_3,mlx5_4,mlx5_7"
+      NCCL_IB_GID_INDEX: "0"
+      NCCL_IB_QPS_PER_CONNECTION: "4"
+      NCCL_CROSS_NIC: "1"
+      NCCL_MIN_NCHANNELS: "4"
+      NCCL_IBEXT_DISABLE: "0"
+      NCCL_SOCKET_IFNAME: "bond0"
+      GLOO_SOCKET_IFNAME: "bond0"
+      NCCL_DEBUG: "WARN"
+      NO_PROXY: "0.0.0.0,localhost,127.0.0.1,${MASTER_IP},${WORKER_IP}"
+      no_proxy: "0.0.0.0,localhost,127.0.0.1,${MASTER_IP},${WORKER_IP}"
+      VLLM_LONG_CTX_DEFAULTS: "1"
+      VLLM_LONG_CTX_MIN_TOKENS_THRESHOLD: "32768"
+      VLLM_LONG_CTX_MIN_TOKENS: "32"
+      VLLM_DEFAULT_TEMPERATURE: "0"
+      VLLM_DEFAULT_TOP_P: "1.0"
+    volumes:
+      - /media/llm:/media/llm
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/hosts:/etc/hosts:ro
+      - /dev/infiniband:/dev/infiniband
+      - ../vllm-patches/sitecustomize.py:/usr/lib/python3.12/sitecustomize.py:ro
+      - ../vllm-patches/sitecustomize.py:/usr/local/lib/python3.12/dist-packages/sitecustomize.py:ro
+      - ../vllm-patches/long_ctx_defaults.py:/usr/local/lib/python3.12/dist-packages/long_ctx_defaults.py:ro
+      - ../vllm-patches/vllm_long_ctx.pth:/usr/local/lib/python3.12/dist-packages/vllm_long_ctx.pth:ro
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    network_mode: host
+    ipc: host
+    shm_size: "32g"
+    privileged: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1', '2', '3', '4', '5', '6', '7']
+              capabilities: [gpu]

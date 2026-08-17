@@ -1,0 +1,98 @@
+services:
+  nginx-llm-proxy:
+    # 使用 OpenResty 以便用 Lua 在 rewrite 阶段读请求体并写入日志变量
+    # network_mode: host：避免 UFW 拦截 docker bridge → 宿主机 30003
+    image: model.vnet.com/sjhl/openresty:1.27.1.2-0-alpine
+    container_name: nginx-minimax-m3-proxy
+    restart: unless-stopped
+    network_mode: host
+    user: "0:0"
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ../nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../conf.d:/etc/nginx/conf.d:ro
+      - ./logs:/var/log/nginx
+      - /usr/share/zoneinfo/Asia/Shanghai:/etc/localtime:ro
+    command: ["openresty", "-c", "/etc/nginx/nginx.conf", "-g", "daemon off;"]
+    depends_on:
+      - minimax-m3-awq-int4-vllm
+
+  minimax-m3-awq-int4-vllm:
+    # 双节点 16 卡 AWQ INT4（TP=16）
+    # node-43: master（rank 0，本机），暴露 HTTP API :30003，nginx :30001
+    # node-44: worker（rank 1，--headless），纯计算节点
+    # 启动顺序：先启动 node-43，再启动 node-44
+    image: ${DOCKER_IMAGE:-model.vnet.com/sjhl/vllm-openai:minimax-m3-awq}
+    container_name: MiniMax-M3-AWQ-INT4-vLLM
+    hostname: ${MASTER_HOSTNAME}
+    restart: unless-stopped
+    runtime: nvidia
+    command: >
+      /media/llm/cyankiwi/MiniMax-M3-AWQ-INT4
+      --served-model-name WanWu/MiniMax-M3
+      --host 0.0.0.0
+      --port 30003
+      --tensor-parallel-size 16
+      --nnodes 2
+      --node-rank 0
+      --master-addr ${MASTER_IP}
+      --master-port ${MASTER_DIST_PORT}
+      --distributed-timeout-seconds 3600
+      --trust-remote-code
+      --block-size 128
+      --max-num-seqs 16
+      --max-num-batched-tokens 8192
+      --gpu-memory-utilization 0.90
+      --max-model-len 524288
+      --distributed-executor-backend mp
+      --enable-chunked-prefill
+      --enable-prefix-caching
+      --no-async-scheduling
+      --tool-call-parser minimax_m3
+      --reasoning-parser minimax_m3
+      --enable-auto-tool-choice
+    environment:
+      TZ: Asia/Shanghai
+      NVIDIA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+      CUDA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+      VLLM_HOST_IP: "${MASTER_IP}"
+      VLLM_USE_MODELSCOPE: "false"
+      NCCL_IB_DISABLE: "0"
+      NCCL_IB_HCA: "mlx5_0,mlx5_3,mlx5_4,mlx5_7"
+      NCCL_IB_GID_INDEX: "0"
+      NCCL_IB_QPS_PER_CONNECTION: "4"
+      NCCL_CROSS_NIC: "1"
+      NCCL_MIN_NCHANNELS: "4"
+      NCCL_IBEXT_DISABLE: "0"
+      NCCL_SOCKET_IFNAME: "bond0"
+      GLOO_SOCKET_IFNAME: "bond0"
+      NCCL_DEBUG: "WARN"
+      NO_PROXY: "0.0.0.0,localhost,127.0.0.1,${MASTER_IP},${WORKER_IP}"
+      no_proxy: "0.0.0.0,localhost,127.0.0.1,${MASTER_IP},${WORKER_IP}"
+    volumes:
+      - /media/llm:/media/llm
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/hosts:/etc/hosts:ro
+      - /dev/infiniband:/dev/infiniband
+      - ../minimax_m3_reasoning_parser.py:/usr/local/lib/python3.12/dist-packages/vllm/reasoning/minimax_m3_reasoning_parser.py:ro
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    network_mode: host
+    ipc: host
+    shm_size: "32g"
+    privileged: true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30003/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 1200s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['0', '1', '2', '3', '4', '5', '6', '7']
+              capabilities: [gpu]
