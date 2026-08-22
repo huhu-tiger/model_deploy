@@ -32,10 +32,14 @@ services:
       --trust-remote-code
       --block-size 128
       --max-num-seqs 48
+      --max-num-batched-tokens 8192
       --gpu-memory-utilization 0.90
       --max-model-len 131072
       --enable-chunked-prefill
       --enable-prefix-caching
+      --mm-encoder-tp-mode data
+      --mm-encoder-attn-backend FLASHINFER
+      --mm-processor-cache-type shm
       --tool-call-parser minimax_m3
       --reasoning-parser minimax_m3
       --enable-auto-tool-choice
