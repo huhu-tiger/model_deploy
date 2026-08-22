@@ -8,7 +8,7 @@
 **对外端口**：`30002`  
 **容器名**：`GLM-5.2-AWQ-INT4-vLLM`  
 **API 模型名**：`WanWu/GLM-Auto`  
-**镜像**：`model.vnet.com/sjhl/vllm-openai:glm52`
+**镜像**：`vllm/vllm-openai:v0.27.1`（GLM-5.2 最低要求 vLLM 0.23.0）
 
 ---
 
@@ -33,7 +33,7 @@ make help
 
 ```bash
 make pull
-# 等同于: docker pull model.vnet.com/sjhl/vllm-openai:glm52
+# 等同于: docker pull vllm/vllm-openai:v0.27.1
 ```
 
 ### 直连模式（vLLM 监听 :30002）
@@ -89,11 +89,17 @@ make nginx-up
 
 - `--served-model-name WanWu/GLM-Auto`：API 调用时使用的模型名。
 - `--tensor-parallel-size 8`：8 卡张量并行。
-- `--max-model-len 131072`：上下文长度上限。
-- `--gpu-memory-utilization 0.90`：GPU 显存利用率上限。
+- `--max-model-len 131072`：上下文长度上限；模型支持更长窗口，但会显著占用 KV Cache。
+- `--gpu-memory-utilization 0.92`：H20 单实例部署的显存利用率上限。
+- `--max-num-seqs 32`：控制长上下文并发，避免 64 并发造成 KV Cache 压力。
+- `--max-num-batched-tokens 32768`：限制单轮调度 token 数，在吞吐和延迟间取平衡。
+- `--speculative-config.method mtp` / `num_speculative_tokens 3`：使用模型内置 MTP 层加速解码。
 - `--tool-call-parser glm47`：GLM-5.2 工具调用解析器。
 - `--reasoning-parser glm45`：启用思考模式（Thinking）解析。
 - `--enable-auto-tool-choice`：允许模型自动决策是否调用工具。
+- `--chat-template-content-format string`：与 GLM 官方聊天模板输入格式保持一致。
+
+> 若 AWQ 权重在实际业务中开启 MTP 后出现精度、显存或 CUDA Graph 问题，可先移除两项 `--speculative-config.*` 参数进行基线验证。
 
 ### 思考模式说明
 

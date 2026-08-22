@@ -16,50 +16,59 @@ services:
       - /usr/share/zoneinfo/Asia/Shanghai:/etc/localtime:ro
     command: ["openresty", "-c", "/etc/nginx/nginx.conf", "-g", "daemon off;"]
     depends_on:
-      - glm-5.2-awq-int4-vllm
+      glm-5.2-awq-int4-vllm:
+        condition: service_healthy
 
   glm-5.2-awq-int4-vllm:
-    image: ${IMAGE:-model.vnet.com/sjhl/vllm-openai:glm52}
+    # GLM-5.2 最低要求 vLLM 0.23.0；固定正式版以保证部署可复现。
+    image: ${IMAGE:-vllm/vllm-openai:v0.27.1}
     container_name: GLM-5.2-AWQ-INT4-vLLM
-    restart: always
+    restart: unless-stopped
     runtime: nvidia
     command: >
       /media/llm/cyankiwi/GLM-5.2-AWQ-INT4
       --served-model-name WanWu/GLM-Auto
+      --middleware model_alias_middleware.AnyModelAliasMiddleware
       --host 0.0.0.0
       --port 30003
       --tensor-parallel-size 8
-      --trust-remote-code
-      --gpu-memory-utilization 0.90
+      --gpu-memory-utilization 0.92
       --max-model-len 131072
       --kv-cache-dtype fp8
-      --max-num-seqs 64
+      --max-num-seqs 32
+      --max-num-batched-tokens 32768
       --enable-chunked-prefill
       --enable-prefix-caching
+      --speculative-config.method mtp
+      --speculative-config.num_speculative_tokens 3
       --tool-call-parser glm47
       --reasoning-parser glm45
       --enable-auto-tool-choice
-      --override-generation-config '{"speculative_config": null}'
+      --chat-template-content-format string
     environment:
       TZ: Asia/Shanghai
       NVIDIA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
       VLLM_USE_MODELSCOPE: "false"
+      VLLM_DEFAULT_MODEL: "WanWu/GLM-Auto"
+      PYTHONPATH: "/opt/vllm-overrides"
       NCCL_DEBUG: "warn"
       # DeepGEMM JIT 预热跳过（GLM-5.2 系列使用 DeepGEMM 内核，首次请求时按需编译）
       VLLM_DEEP_GEMM_WARMUP: "skip"
     volumes:
       - /media/llm:/media/llm
+      - ./middleware:/opt/vllm-overrides:ro
       - /usr/share/zoneinfo/Asia/Shanghai:/etc/localtime:ro
     ulimits:
       memlock: -1
       stack: 67108864
     ipc: host
     shm_size: "32g"
+    stop_grace_period: 5m
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:30003/health"]
-      interval: 300s
+      interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
       start_period: 1200s
     deploy:
       resources:

@@ -4,10 +4,10 @@
 SHELL := /bin/bash
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 
-COMPOSE_DIRECT := docker compose -f $(ROOT)/docker-compose.yml
-COMPOSE_NGINX  := docker compose -f $(ROOT)/docker-compose-nginx.yml
+COMPOSE_DIRECT := docker-compose -f $(ROOT)/docker-compose.yml
+COMPOSE_NGINX  := docker-compose -f $(ROOT)/docker-compose-nginx.yml
 
-IMAGE ?= model.vnet.com/sjhl/vllm-openai:glm52
+IMAGE ?= vllm/vllm-openai:v0.27.1
 
 .PHONY: help pull up down restart logs ps \
         nginx-up nginx-down nginx-stop nginx-restart nginx-logs nginx-ps
