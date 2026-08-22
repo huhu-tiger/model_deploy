@@ -1,17 +1,23 @@
-version: "3.9"
-
-# GLM-5.2-AWQ-INT4 — vLLM（compressed-tensors INT4）
-# ModelScope: https://modelscope.cn/models/cyankiwi/GLM-5.2-AWQ-INT4
-#
-# 权重路径: /media/llm/cyankiwi/GLM-5.2-AWQ-INT4
-# 镜像: docker pull model.vnet.com/sjhl/vllm-openai:glm52
-#
-# 启动提速说明（启动耗时主要来自三阶段）:
-#   1. 权重加载: 受磁盘 IO 限制，无法绕过
-#   2. KV cache profiling: 加 --num-gpu-blocks-override <N> 可跳过（N 从日志 "# GPU blocks" 获取）
-#   3. CUDA graph capture: 加 --enforce-eager 可跳过（节省 5~20min，吞吐略降，小并发场景可接受）
-
 services:
+  nginx-llm-proxy:
+    # 使用 OpenResty 以便用 Lua 在 rewrite 阶段读请求体并写入日志变量（标准 nginx 的 $request_body 在 proxy 场景不生效）
+    image: model.vnet.com/sjhl/openresty:1.27.1.2-0-alpine
+    container_name: nginx-glm-5.2-awq-proxy
+    restart: unless-stopped
+    ports:
+      - "30002:80"
+    user: "0:0"
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./conf.d:/etc/nginx/conf.d:ro
+      - ./logs:/var/log/nginx
+      - /usr/share/zoneinfo/Asia/Shanghai:/etc/localtime:ro
+    command: ["openresty", "-c", "/etc/nginx/nginx.conf", "-g", "daemon off;"]
+    depends_on:
+      - glm-5.2-awq-int4-vllm
+
   glm-5.2-awq-int4-vllm:
     image: ${IMAGE:-model.vnet.com/sjhl/vllm-openai:glm52}
     container_name: GLM-5.2-AWQ-INT4-vLLM
@@ -21,7 +27,7 @@ services:
       /media/llm/cyankiwi/GLM-5.2-AWQ-INT4
       --served-model-name WanWu/GLM-Auto
       --host 0.0.0.0
-      --port 30002
+      --port 30003
       --tensor-parallel-size 8
       --trust-remote-code
       --gpu-memory-utilization 0.90
@@ -35,6 +41,7 @@ services:
       --enable-auto-tool-choice
       --override-generation-config '{"speculative_config": null}'
     environment:
+      TZ: Asia/Shanghai
       NVIDIA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
       VLLM_USE_MODELSCOPE: "false"
       NCCL_DEBUG: "warn"
@@ -42,16 +49,14 @@ services:
       VLLM_DEEP_GEMM_WARMUP: "skip"
     volumes:
       - /media/llm:/media/llm
-      - /etc/localtime:/etc/localtime
-    ports:
-      - "30002:30002"
+      - /usr/share/zoneinfo/Asia/Shanghai:/etc/localtime:ro
     ulimits:
       memlock: -1
       stack: 67108864
     ipc: host
     shm_size: "32g"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:30002/health"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30003/health"]
       interval: 300s
       timeout: 10s
       retries: 3
