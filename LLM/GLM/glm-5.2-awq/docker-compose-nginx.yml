@@ -5,7 +5,7 @@ services:
     container_name: nginx-glm-5.2-awq-proxy
     restart: unless-stopped
     ports:
-      - "30002:80"
+      - "30001:80"
     user: "0:0"
     environment:
       TZ: Asia/Shanghai
@@ -15,16 +15,19 @@ services:
       - ./logs:/var/log/nginx
       - /usr/share/zoneinfo/Asia/Shanghai:/etc/localtime:ro
     command: ["openresty", "-c", "/etc/nginx/nginx.conf", "-g", "daemon off;"]
-    depends_on:
-      glm-5.2-awq-int4-vllm:
-        condition: service_healthy
 
   glm-5.2-awq-int4-vllm:
     # GLM-5.2 最低要求 vLLM 0.23.0；固定正式版以保证部署可复现。
-    image: ${IMAGE:-vllm/vllm-openai:v0.27.1}
+    # CUDA Graph：默认 FULL_AND_PIECEWISE 会在 profile_cudagraph_memory 里捕获
+    # FLASHMLA_SPARSE decode（padding heads 8→64）。当前节点上 TP0 会在该阶段静默崩溃，
+    # 其余 rank 随后在 custom all-reduce 的 Gloo register_graph_buffers 失败。
+    # 因此改用 PIECEWISE（attention 保持 eager，MoE/MLP 仍走图）并关闭 custom all-reduce。
+    image: ${IMAGE:-model.vnet.com/sjhl/vllm-openai:v0.27.1}
     container_name: GLM-5.2-AWQ-INT4-vLLM
     restart: unless-stopped
     runtime: nvidia
+    # 模型别名中间件：任意 /v1 POST 的 model 字段改写为 VLLM_DEFAULT_MODEL
+    # 依赖：--middleware + PYTHONPATH=/opt/vllm-overrides + ./middleware 挂载
     command: >
       /media/llm/cyankiwi/GLM-5.2-AWQ-INT4
       --served-model-name WanWu/GLM-Auto
@@ -32,15 +35,18 @@ services:
       --host 0.0.0.0
       --port 30003
       --tensor-parallel-size 8
-      --gpu-memory-utilization 0.92
+      --enable-expert-parallel
+      --expert-placement-strategy round_robin
+      --all2all-backend allgather_reducescatter
+      --gpu-memory-utilization 0.93
       --max-model-len 131072
       --kv-cache-dtype fp8
-      --max-num-seqs 32
+      --max-num-seqs 64
       --max-num-batched-tokens 32768
+      --compilation-config '{"cudagraph_mode": "PIECEWISE"}'
+      --disable-custom-all-reduce
       --enable-chunked-prefill
       --enable-prefix-caching
-      --speculative-config.method mtp
-      --speculative-config.num_speculative_tokens 3
       --tool-call-parser glm47
       --reasoning-parser glm45
       --enable-auto-tool-choice
@@ -52,6 +58,8 @@ services:
       VLLM_DEFAULT_MODEL: "WanWu/GLM-Auto"
       PYTHONPATH: "/opt/vllm-overrides"
       NCCL_DEBUG: "warn"
+      # 当前节点的 NVLink SHARP 初始化会触发 CUDA error 401，回退到普通 NCCL 通信
+      NCCL_NVLS_ENABLE: "0"
       # DeepGEMM JIT 预热跳过（GLM-5.2 系列使用 DeepGEMM 内核，首次请求时按需编译）
       VLLM_DEEP_GEMM_WARMUP: "skip"
     volumes:
@@ -63,7 +71,7 @@ services:
       stack: 67108864
     ipc: host
     shm_size: "32g"
-    stop_grace_period: 5m
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:30003/health"]
       interval: 30s
