@@ -1,0 +1,34 @@
+{
+  "fill_char": "测",
+  "fill_text": "",
+  "prefix_file": "",
+  "suffix": "【任务】从1开始连续输出整数，每个数字单独一行，不要解释，不要停，一直输出到上限。",
+  "unique_head_chars": 256,
+  "unique_tail_chars": 24,
+  "stamp_interval": 256,
+  "max_tokens": 256,
+  "reserve_tokens": 512,
+  "min_context_k": 8,
+  "context_fractions": [1.0, 0.75, 0.5, 0.25, 0.125],
+  "context_levels": "",
+  "parallel": 2,
+  "parallel_max": 16,
+  "number_mult": 2,
+  "number_max": 16,
+  "modes": [
+    {
+      "id": "cache_miss",
+      "label": "不命中",
+      "prefix": "unique",
+      "warmup": 0,
+      "enabled": true
+    },
+    {
+      "id": "cache_hit",
+      "label": "命中",
+      "prefix": "shared",
+      "warmup": 1,
+      "enabled": false
+    }
+  ]
+}

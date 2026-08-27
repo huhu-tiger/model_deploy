@@ -4,8 +4,8 @@
 SHELL := /bin/bash
 ROOT  := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 
-COMPOSE_DIRECT := docker compose -f $(ROOT)/docker-compose.yml
-COMPOSE_NGINX  := docker compose -f $(ROOT)/docker-compose-nginx.yml
+COMPOSE_DIRECT := docker-compose -f $(ROOT)/docker-compose.yml
+COMPOSE_NGINX  := docker-compose -f $(ROOT)/docker-compose-nginx.yml
 
 # ── 镜像 ──────────────────────────────────────────────────────────────────────
 IMAGE ?= model.vnet.com/sjhl/vllm-openai:minimax-m3-awq
@@ -122,7 +122,7 @@ nginx-stop:
 	$(COMPOSE_NGINX) stop nginx-llm-proxy
 
 nginx-restart:
-	$(COMPOSE_NGINX) up -d --force-recreate nginx-llm-proxy
+	$(COMPOSE_NGINX) up -d --no-deps --force-recreate nginx-llm-proxy
 
 nginx-logs:
 	$(COMPOSE_NGINX) logs -f --tail=200

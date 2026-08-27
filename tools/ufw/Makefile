@@ -10,6 +10,7 @@ space := $(empty) $(empty)
 # ── 默认配置（来自 defaults.env，单点维护）──────────────────────────────────
 TARGET_PORTS ?= $(shell . "$(DEFAULTS_ENV)" && printf '%s' "$$UFW_DEFAULT_TARGET_PORTS")
 WHITELIST_IPS ?= $(shell . "$(DEFAULTS_ENV)" && printf '%s' "$$UFW_DEFAULT_WHITELIST")
+INTERNAL_CIDRS ?= $(shell . "$(DEFAULTS_ENV)" && printf '%s' "$$UFW_INTERNAL_CIDRS")
 H20_43_PORTS     := $(shell . "$(DEFAULTS_ENV)" && printf '%s' "$$UFW_H20_43_PORTS")
 H20_43_WHITELIST := $(shell . "$(DEFAULTS_ENV)" && printf '%s' "$$UFW_H20_43_WHITELIST")
 H20_44_PORTS     := $(shell . "$(DEFAULTS_ENV)" && printf '%s' "$$UFW_H20_44_PORTS")
@@ -23,12 +24,14 @@ A800_43_WHITELIST := $(shell . "$(DEFAULTS_ENV)" && printf '%s' "$$UFW_A800_43_W
 
 # 支持逗号分隔：WHITELIST_IPS=1.2.3.4,10.0.0.0/8
 WHITELIST_LIST := $(strip $(subst $(comma),$(space),$(WHITELIST_IPS)))
+INTERNAL_LIST  := $(strip $(subst $(comma),$(space),$(INTERNAL_CIDRS)))
 PORTS_LIST     := $(strip $(subst $(comma),$(space),$(TARGET_PORTS)))
 
 export TARGET_PORTS := $(PORTS_LIST)
 export WHITELIST_IPS := $(WHITELIST_LIST)
+export INTERNAL_CIDRS := $(INTERNAL_LIST)
 
-.PHONY: help enable disable status dry-run log blocked-ips \
+.PHONY: help enable disable docker-bridges docker-user install-hook status dry-run log blocked-ips \
 	h20-43 h20-43-dry-run H20-43 H20-43-dry-run \
 	h20-44 h20-44-dry-run H20-44 H20-44-dry-run \
 	h100-42 h100-42-dry-run H100-42 H100-42-dry-run \
@@ -43,25 +46,29 @@ help:
 	@echo ""
 	@echo "用法:"
 	@echo "  make enable                              应用规则并启用 UFW（默认仅开放 22/SSH）"
-	@echo "  make disable                             关闭 UFW，恢复 DOCKER-USER"
+	@echo "  make disable                             关闭 UFW，恢复 DOCKER-USER，移除启动钩子"
+	@echo "  make docker-user                          按上次 enable 配置恢复 DOCKER-USER（不 reset）"
+	@echo "  make docker-bridges                      补齐网桥规则；已 enable 时同时恢复 DOCKER-USER"
+	@echo "  make install-hook                         仅安装 Docker 启动钩子"
 	@echo "  make status                              查看 UFW / DOCKER-USER 状态"
 	@echo "  make log                                 查看最近拦截（默认最近 1 天，表格汇总）"
 	@echo "  make log DAYS=3                          查看最近 3 天拦截统计"
 	@echo "  make dry-run                             打印即将使用的配置（不执行）"
-	@echo "  make h20-43 | make H20-43                    主机预设：端口 22 30001 30002 2000:10000 20000，白名单=默认"
+	@echo "  make h20-43 | make H20-43                    主机预设：端口 22 30001 30002 2000:10000 20000，白名单=默认+家庭宽带"
 	@echo "  make h20-43-dry-run | make H20-43-dry-run    预览 h20-43 配置"
-	@echo "  make h20-44 | make H20-44                    主机预设：端口 22 30002 2000:10000 20000，白名单=默认"
+	@echo "  make h20-44 | make H20-44                    主机预设：端口 22 58083 2000:10000 20000，白名单=默认+家庭宽带"
 	@echo "  make h20-44-dry-run | make H20-44-dry-run    预览 h20-44 配置"
-	@echo "  make h100-42 | make H100-42                    主机预设：端口 22 30001，白名单=默认"
+	@echo "  make h100-42 | make H100-42                    主机预设：端口 22 30001，白名单=默认+家庭宽带"
 	@echo "  make h100-42-dry-run | make H100-42-dry-run    预览 H100-42 配置"
-	@echo "  make a800-40 | make A800-40                  主机预设：端口 22 3000 9000 9131 9116 9410 10010:10034"
+	@echo "  make a800-40 | make A800-40                  主机预设：端口 22 3000 9000 9131 9116 9410 10010:10034，白名单=默认+家庭宽带"
 	@echo "  make a800-40-dry-run | make A800-40-dry-run  预览 A800-40 配置"
-	@echo "  make a800-43 | make A800-43                  主机预设：端口 22 8080 9111 9116 20170:20172 27171 30008 30009，白名单=默认"
+	@echo "  make a800-43 | make A800-43                  主机预设：端口 22 8000 8080 9111 9116 9118 20170:20172 27171 30008 30009 22026，白名单=默认+家庭宽带"
 	@echo "  make a800-43-dry-run | make A800-43-dry-run  预览 A800-43 配置"
 	@echo ""
 	@echo "覆盖配置（make 参数或 export 环境变量）:"
 	@echo "  TARGET_PORTS    开放端口，空格或逗号分隔（必填，不能为空）"
-	@echo "  WHITELIST_IPS   白名单，空格或逗号分隔（必填，不能为空）"
+	@echo "  WHITELIST_IPS   公网白名单，空格或逗号分隔（必填，不能为空）"
+	@echo "  INTERNAL_CIDRS  内网网段，全端口放行（默认 RFC1918 + IPv6 ULA）"
 	@echo "  EXTERNAL_INTERFACE  出口网卡（可选，默认自动检测）"
 	@echo "  DAYS            make log 统计最近天数（默认 1）"
 	@echo "  BLOCKED_SINCE   自定义时间窗口，如 \"7 days\" / \"24 hours\"（优先于 DAYS）"
@@ -71,20 +78,23 @@ help:
 	@echo "  make enable WHITELIST_IPS=\"211.99.216.18,192.168.0.0/16\""
 	@echo "  make enable TARGET_PORTS=22 WHITELIST_IPS=1.2.3.4"
 	@echo "  make h20-43                              # 或 H20-43，端口 22,30001,30002,2000:10000,20000"
-	@echo "  make h20-44                              # 或 H20-44，端口 22,30002,2000:10000,20000"
+	@echo "  make h20-44                              # 或 H20-44，端口 22,58083,2000:10000,20000"
 	@echo "  make h100-42                             # 或 H100-42，端口 22,30001"
 	@echo "  make a800-40                             # 或 A800-40，端口 22,3000,9000,9131,9116,9410,10010:10034"
-	@echo "  make a800-43                             # 或 A800-43，端口 22,8080,9111,9116,20170:20172,27171,30008,30009"
+	@echo "  make a800-43                             # 或 A800-43，端口见 defaults.env"
+	@echo "  make docker-user                          # 恢复 DOCKER-USER（Docker 重启后钩子会自动跑）"
 	@echo "  make log                                 # 最近 1 天 DOCKER-USER 拦截统计"
 	@echo "  make log DAYS=7                          # 最近 7 天"
 	@echo ""
 	@echo "当前默认值（来自 defaults.env）:"
 	@echo "  TARGET_PORTS=$(TARGET_PORTS)"
 	@echo "  WHITELIST_IPS=$(WHITELIST_IPS)"
+	@echo "  INTERNAL_CIDRS=$(INTERNAL_CIDRS)"
 
 dry-run:
 	@echo "TARGET_PORTS=$(PORTS_LIST)"
 	@echo "WHITELIST_IPS=$(WHITELIST_LIST)"
+	@echo "INTERNAL_CIDRS=$(INTERNAL_LIST)"
 	@if [[ -n "$(strip $(EXTERNAL_INTERFACE))" ]]; then \
 		echo "EXTERNAL_INTERFACE=$(EXTERNAL_INTERFACE)"; \
 	else \
@@ -94,10 +104,20 @@ dry-run:
 enable:
 	@echo ">>> TARGET_PORTS=$(PORTS_LIST)"
 	@echo ">>> WHITELIST_IPS=$(WHITELIST_LIST)"
+	@echo ">>> INTERNAL_CIDRS=$(INTERNAL_LIST)"
 	@EXTERNAL_INTERFACE="$(EXTERNAL_INTERFACE)" bash "$(SCRIPT)" enable
 
 disable:
 	@bash "$(SCRIPT)" disable
+
+docker-bridges:
+	@bash "$(SCRIPT)" docker-bridges
+
+docker-user:
+	@bash "$(SCRIPT)" docker-user
+
+install-hook:
+	@bash "$(SCRIPT)" install-hook
 
 log blocked-ips:
 	@if [[ -n "$(strip $(BLOCKED_SINCE))" ]]; then \
