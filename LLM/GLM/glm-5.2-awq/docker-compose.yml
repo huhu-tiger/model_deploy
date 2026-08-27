@@ -19,9 +19,10 @@ services:
     runtime: nvidia
     command: >
       /media/llm/cyankiwi/GLM-5.2-AWQ-INT4
-      --served-model-name glm-5.2
+      --served-model-name WanWu/GLM-Auto
+      --middleware model_alias_middleware.AnyModelAliasMiddleware
       --host 0.0.0.0
-      --port 30001
+      --port 30002
       --tensor-parallel-size 8
       --trust-remote-code
       --gpu-memory-utilization 0.90
@@ -37,21 +38,24 @@ services:
     environment:
       NVIDIA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
       VLLM_USE_MODELSCOPE: "false"
+      VLLM_DEFAULT_MODEL: "WanWu/GLM-Auto"
+      PYTHONPATH: "/opt/vllm-overrides"
       NCCL_DEBUG: "warn"
       # DeepGEMM JIT 预热跳过（GLM-5.2 系列使用 DeepGEMM 内核，首次请求时按需编译）
       VLLM_DEEP_GEMM_WARMUP: "skip"
     volumes:
       - /media/llm:/media/llm
+      - ./middleware:/opt/vllm-overrides:ro
       - /etc/localtime:/etc/localtime
     ports:
-      - "30001:30001"
+      - "30002:30002"
     ulimits:
       memlock: -1
       stack: 67108864
     ipc: host
     shm_size: "32g"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30002/health"]
       interval: 300s
       timeout: 10s
       retries: 3

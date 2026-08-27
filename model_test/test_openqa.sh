@@ -21,16 +21,17 @@ echo "=========================================="
 echo "压测配置: OpenQA 数据集 - 基础压测"
 echo "=========================================="
 echo "数据集: OpenQA (真实问答)"
-echo "并发级别: 1, 2, 4, 8, 16, 32"
-echo "每级请求数: 100"
+echo "目标: http://172.31.0.32:30001  Ornith-1.0-35B"
+echo "并发级别: 32, 48, 64"
+echo "每级请求数: 64, 96, 128"
 echo "模式: 基础性能测试"
 echo "=========================================="
 echo ""
 
 # 执行压测 - 测试多个并发级别
 evalscope perf \
-  --model GLM-5.2 \
-  --url http://61.49.53.42:30001/v1/chat/completions \
+  --model /media/llm/deepreinforce-ai/Ornith-1.0-35B \
+  --url http://172.31.0.32:30001/v1/chat/completions \
   --extra-args '{"chat_template_kwargs": {"enable_thinking": false}}' \
   --api openai \
   --dataset openqa \
@@ -44,5 +45,5 @@ evalscope perf \
   --stream \
   --visualizer swanlab \
   --swanlab-api-key local \
-  --name 'deepseek-v3.2_of_swanlab_log'
+  --name 'Ornith-1.0-35B_openqa'
 

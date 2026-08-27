@@ -58,6 +58,21 @@ python test_sla_random.py
 
 ---
 
+### context_bench/ — 长上下文分档压测
+
+独立目录 `context_bench/`：从 `/v1/models` 读取 `max_model_len`，按 **全量 / 1/2 / 1/4** 切档（例如 128K → 128 / 64 / 32K），每档再扫并发。默认测 **缓存不命中**（每条前缀不同，填充汉字「测」，末尾要求连续输出数字）。正文写在 `context_bench/config/content.json`。公共方法在 `context_bench/common/`，后续脚本可直接复用。
+
+```bash
+./context_bench/test_context_sweep.sh
+API_BASE=http://127.0.0.1:30001 ./context_bench/test_context_sweep.sh
+PARALLEL=4 ./context_bench/test_context_sweep.sh
+CONTEXT_LEVELS=64,128,256,384,512 PARALLEL=8 ./context_bench/test_context_sweep.sh
+```
+
+详见 [context_bench/README.md](context_bench/README.md)。
+
+---
+
 ### test_openqa.sh — 基础压测（OpenQA 数据集）
 
 对多个并发级别逐一测试，输出各级别的完整性能指标，支持 SwanLab 可视化。

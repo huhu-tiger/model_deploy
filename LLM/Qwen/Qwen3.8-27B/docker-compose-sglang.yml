@@ -1,0 +1,77 @@
+version: "3.9"
+
+# Qwen3.8-27B | SGLang | 4×A800-80G 稳定档
+# 权重: /media/llm/Qwen/Qwen3.8-27B（BF16，dense hybrid GDN + 原生视觉）
+# 官方配方: https://docs.sglang.io/cookbook/autoregressive/Qwen/Qwen3.8-27B
+# SGLang v0.5.18 首次发布 Qwen3.8 官方配方；使用配方专用、已验证镜像 qwen38-27b。
+# GPU / 端口保持不变: 卡 2,3,5,6，端口 30001。
+#
+# A800（SM80）使用 BF16 权重，不使用仅适合 Blackwell 的 NVFP4 checkpoint。
+# 默认不开 MTP，优先保证 TP=4 和长上下文稳定；需要吞吐优化时再按官方配方启用 EAGLE。
+
+services:
+  qwen3-8-27b-sglang:
+    image: lmsysorg/sglang:qwen38-27b
+    container_name: Qwen3.8-27B
+    restart: always
+    runtime: nvidia
+    command: >
+      sglang serve
+      --model-path /media/llm/Qwen/Qwen3.8-27B
+      --served-model-name WanWu/Qwen-Auto
+      --host 0.0.0.0
+      --port 30001
+      --tp-size 4
+      --dtype bfloat16
+      --trust-remote-code
+      --context-length 262144
+      --mem-fraction-static 0.88
+      --kv-cache-dtype fp8_e4m3
+      --attention-backend flashinfer
+      --chunked-prefill-size 8192
+      --enable-dynamic-chunking
+      --max-prefill-tokens 16384
+      --max-running-requests 32
+      --cuda-graph-max-bs-decode 32
+      --mamba-ssm-dtype bfloat16
+      --mamba-radix-cache-strategy extra_buffer_lazy
+      --reasoning-parser qwen3
+      --tool-call-parser qwen3_coder
+      --enable-metrics
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "2,3,5,6"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+      NVIDIA_DISABLE_REQUIRE: "1"
+      SGLANG_CACHE_DIR: "/root/.cache/sglang"
+      OMP_NUM_THREADS: "1"
+      NCCL_DEBUG: "WARN"
+      TZ: "Asia/Shanghai"
+    volumes:
+      - /media/llm:/media/llm
+      - /media/llm/qwen3-8-27b-sglang-cache:/root/.cache/sglang
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "30001:30001"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30001/health"]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 900s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ['2', '3', '5', '6']
+              capabilities: [gpu]

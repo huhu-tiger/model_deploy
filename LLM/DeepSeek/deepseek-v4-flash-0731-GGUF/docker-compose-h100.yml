@@ -1,0 +1,93 @@
+# DeepSeek-V4-Flash-0731 GGUF (UD-Q8_K_XL) — llama.cpp + OpenResty
+# 权重: https://modelscope.cn/models/unsloth/DeepSeek-V4-Flash-0731-GGUF/tree/master/UD-Q8_K_XL
+# 本地: /media/llm/unsloth/DeepSeek-V4-Flash-0731-GGUF/UD-Q8_K_XL/
+# 镜像: model.vnet.com/sjhl/server-cuda13-b9265 (llama-server)
+# Hardware: H100 × 8 | UD-Q8_K_XL ≈ 162GB（lossless）| context=256K
+# 对外: nginx :30001 → 后端 :30003
+#
+# 下载权重（ModelScope）:
+#   modelscope download unsloth/DeepSeek-V4-Flash-0731-GGUF \
+#     --local_dir /media/llm/unsloth/DeepSeek-V4-Flash-0731-GGUF \
+#     --include 'UD-Q8_K_XL/*'
+#
+# 注意:
+#   1) 与 deepseek-v4-flash-0731（SGLang）端口冲突，勿同时 up
+#   2) 当前镜像 b9265 尚无 draft-dspark；DSpark 需升级 llama.cpp 后再加 -md / --spec-type draft-dspark
+
+services:
+  nginx-llm-proxy:
+    image: model.vnet.com/sjhl/openresty:1.27.1.2-0-alpine
+    container_name: nginx-deepseek-v4-flash-gguf-proxy
+    restart: unless-stopped
+    network_mode: host
+    user: "0:0"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./conf.d:/etc/nginx/conf.d:ro
+      - ./logs:/var/log/nginx
+      - /etc/localtime:/etc/localtime:ro
+    command: ["openresty", "-c", "/etc/nginx/nginx.conf", "-g", "daemon off;"]
+
+  deepseek-v4-flash-gguf:
+    image: ${IMAGE:-model.vnet.com/sjhl/server-cuda13-b9265}
+    container_name: deepseek-v4-flash-gguf
+    restart: unless-stopped
+    # entrypoint 已是 /app/llama-server，command 只传参数
+    # 多分片 GGUF：传入 00001-of-00005，llama.cpp 自动加载其余分片
+    command:
+      - -m
+      - ${MODEL:-/media/llm/unsloth/DeepSeek-V4-Flash-0731-GGUF/UD-Q8_K_XL/DeepSeek-V4-Flash-0731-UD-Q8_K_XL-00001-of-00005.gguf}
+      - -a
+      - ${ALIAS:-DeepSeek-V4-Flash-0731-GGUF}
+      - -ngl
+      - "99"
+      - -ts
+      - "1,1,1,1,1,1,1,1"
+      - -sm
+      - layer
+      - -c
+      - "${CTX:-262144}"
+      - -fa
+      - "on"
+      - -cb
+      - -np
+      - "${NP:-2}"
+      - -b
+      - "2048"
+      - -ub
+      - "512"
+      - -ctk
+      - q8_0
+      - -ctv
+      - q8_0
+      - --jinja
+      - --host
+      - 0.0.0.0
+      - --port
+      - "30003"
+      - --metrics
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+      CUDA_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+    volumes:
+      - /media/llm:/media/llm:ro
+      - /etc/localtime:/etc/localtime:ro
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    network_mode: host
+    ipc: host
+    shm_size: "32g"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:30003/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
