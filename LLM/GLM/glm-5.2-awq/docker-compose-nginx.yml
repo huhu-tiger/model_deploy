@@ -18,10 +18,9 @@ services:
 
   glm-5.2-awq-int4-vllm:
     # GLM-5.2 最低要求 vLLM 0.23.0；固定正式版以保证部署可复现。
-    # CUDA Graph：默认 FULL_AND_PIECEWISE 会在 profile_cudagraph_memory 里捕获
-    # FLASHMLA_SPARSE decode（padding heads 8→64）。当前节点上 TP0 会在该阶段静默崩溃，
-    # 其余 rank 随后在 custom all-reduce 的 Gloo register_graph_buffers 失败。
-    # 因此改用 PIECEWISE（attention 保持 eager，MoE/MLP 仍走图）并关闭 custom all-reduce。
+    # CUDA Graph：FULL 会捕获 FLASHMLA_SPARSE decode 并让 TP0 崩溃。
+    # 改用 PIECEWISE（attention eager，MoE/MLP 走图），并把 batched-tokens 限制在 8192，
+    # 避免 32K compile range 把 KV 压到不够 128K。
     image: ${IMAGE:-model.vnet.com/sjhl/vllm-openai:v0.27.1}
     container_name: GLM-5.2-AWQ-INT4-vLLM
     restart: unless-stopped
@@ -36,14 +35,12 @@ services:
       --port 30003
       --tensor-parallel-size 8
       --enable-expert-parallel
-      --expert-placement-strategy round_robin
-      --all2all-backend allgather_reducescatter
-      --gpu-memory-utilization 0.93
+      --gpu-memory-utilization 0.92
       --max-model-len 131072
       --kv-cache-dtype fp8
       --max-num-seqs 64
-      --max-num-batched-tokens 32768
-      --compilation-config '{"cudagraph_mode": "PIECEWISE"}'
+      --max-num-batched-tokens 8192
+      --compilation-config '{"cudagraph_mode": "PIECEWISE", "cudagraph_capture_sizes": [1, 2, 4, 8, 16, 32, 64]}'
       --disable-custom-all-reduce
       --enable-chunked-prefill
       --enable-prefix-caching
@@ -62,6 +59,8 @@ services:
       NCCL_NVLS_ENABLE: "0"
       # DeepGEMM JIT 预热跳过（GLM-5.2 系列使用 DeepGEMM 内核，首次请求时按需编译）
       VLLM_DEEP_GEMM_WARMUP: "skip"
+      # 关闭 CUDA graph 显存线性外推，避免再吞掉 KV 预算
+      VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "0"
     volumes:
       - /media/llm:/media/llm
       - ./middleware:/opt/vllm-overrides:ro
