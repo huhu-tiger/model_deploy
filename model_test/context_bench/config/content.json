@@ -6,15 +6,22 @@
   "unique_head_chars": 256,
   "unique_tail_chars": 24,
   "stamp_interval": 256,
-  "max_tokens": 256,
+  "max_tokens": 2048,
   "reserve_tokens": 512,
-  "min_context_k": 8,
+  "min_context_k": 4,
   "context_fractions": [1.0, 0.75, 0.5, 0.25, 0.125],
-  "context_levels": "",
+  "context_levels": "4,8,16,32,64,128,256,300",
   "parallel": 2,
-  "parallel_max": 16,
+  "parallel_anchor_k": 128,
+  "parallel_max": 64,
   "number_mult": 2,
-  "number_max": 16,
+  "number_max": 64,
+  "chart_colors": {
+    "cold_ttft": "#1d4ed8",
+    "cold_latency": "#93c5fd",
+    "hot_ttft": "#15803d",
+    "hot_latency": "#86efac"
+  },
   "modes": [
     {
       "id": "cache_miss",
@@ -28,7 +35,7 @@
       "label": "命中",
       "prefix": "shared",
       "warmup": 1,
-      "enabled": false
+      "enabled": true
     }
   ]
 }

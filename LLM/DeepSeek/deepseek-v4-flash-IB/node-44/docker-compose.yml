@@ -1,16 +1,11 @@
-# DeepSeek-V4-Flash-0731 — SGLang 0.5.17 — 双节点 16 卡 H20 + IB
-# node-44: worker（rank 1），纯计算节点，不对外暴露 HTTP API
-# node-43: master（rank 0），在 node-43 先启动后再启动本节点
+# DeepSeek-V4-Flash-0731 — SGLang 0.5.18 — 双节点 16 卡 H20 + IB
+# node-44: PP stage 1（rank 1），纯计算节点，不对外暴露 HTTP API
 # 参数须与 node-43 一致（仅 rank / hostname 不同）
-# 官方 cookbook（H100 + Flash Official + FP4）+ 双节点必要项:
-#   kv=fp8_e4m3  swa-full=0.1  page=256  dsv4  hybrid SWA  marlin  无 DSPARK
-#   context=384K  mem=0.85  disable-radix-cache
-#   --preferred-sampling-params 只出现在 /get_model_info；客户端不传 temperature 时实际用 generation_config 的 1.0
-# 不要加 --disable-hybrid-swa-memory / --kv-cache-dtype bfloat16
+# 300K 输入 + 2K 输出低延迟配置：TP=8、PP=2、动态 chunked prefill、Radix prefix cache
 
 services:
   deepseek-v4-flash:
-    image: ${DOCKER_IMAGE:-model.vnet.com/sjhl/sglang:v0.5.17}
+    image: ${DOCKER_IMAGE:-model.vnet.com/sjhl/sglang:v0.5.18}
     container_name: deepseek-v4-flash
     hostname: ${WORKER_HOSTNAME}
     restart: unless-stopped
@@ -18,32 +13,32 @@ services:
       sglang serve
       --trust-remote-code
       --model-path /models/DeepSeek-V4-Flash-0731
-      --context-length 393216
+      --context-length 327680
       --mem-fraction-static 0.85
       --kv-cache-dtype fp8_e4m3
       --page-size 256
-      --tp 16
+      --tp 8
+      --pp-size 2
       --nnodes 2
       --node-rank 1
-      --dp-size 2
-      --enable-dp-attention
       --dist-init-addr ${MASTER_IP}:${MASTER_DIST_PORT}
       --dist-timeout 3600
       --moe-runner-backend marlin
       --attention-backend dsv4
       --swa-full-tokens-ratio 0.1
-      --chunked-prefill-size 32768
-      --max-prefill-tokens 65536
-      --prefill-max-requests 2
-      --disable-overlap-schedule
-      --cuda-graph-max-bs-decode 32
-      --max-running-requests 32
-      --max-queued-requests 64
-      --schedule-conservativeness 0.5
+      --chunked-prefill-size 12288
+      --enable-dynamic-chunking
+      --max-prefill-tokens 32768
+      --prefill-max-requests 1
+      --cuda-graph-max-bs-decode 8
+      --disable-custom-all-reduce
+      --max-running-requests 8
+      --max-queued-requests 16
+      --schedule-policy lpm
+      --schedule-conservativeness 0.8
       --watchdog-timeout 900
       --skip-server-warmup
       --disable-flashinfer-autotune
-      --disable-radix-cache
       --preferred-sampling-params '{"temperature":0.1,"top_p":1.0}'
       --enable-metrics
       --tool-call-parser deepseekv4
@@ -58,13 +53,11 @@ services:
       SGLANG_JIT_DEEPGEMM_FAST_WARMUP: "1"
       SGLANG_JIT_DEEPGEMM_PRECOMPILE: "0"
       SGLANG_SHARED_EXPERT_TP1: "1"
-      SGLANG_DP_SHARED_EXPERT_LOCAL: "1"
+      SGLANG_DYNAMIC_CHUNKING_SMOOTH_FACTOR: "0.75"
       # 排查超长上下文下偶发提前 EOS：WARN 级别只打日志不崩溃
       SGLANG_INVARIANT_CHECK: "1"
       SGLANG_SANITIZE_NAN_LOGITS: "1"
       SGLANG_DSV4_COMPRESS_STATE_DTYPE: "float32"
-      # 长 prompt（≥32K token）自动 ignore_eos，缓解提前 EOS；0 关闭
-      SGLANG_LONG_CTX_IGNORE_EOS_TOKENS: "32768"
       PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
       NCCL_IB_DISABLE: "0"
       NCCL_IB_HCA: "mlx5_0,mlx5_3,mlx5_4,mlx5_7"
@@ -79,22 +72,13 @@ services:
       NO_PROXY: "0.0.0.0,localhost,127.0.0.1,${MASTER_IP},${WORKER_IP}"
       no_proxy: "0.0.0.0,localhost,127.0.0.1,${MASTER_IP},${WORKER_IP}"
     volumes:
-      - /media/llm/deepseek-ai/DeepSeek-V4-Flash-0731:/models/DeepSeek-V4-Flash-0731:ro
-      - /media/llm/deepseek-v4-flash-0731-cache:/root/.cache/deepseek-v4-flash-0731-cache
+      - ${MODEL_HOST_PATH:-/media/llm/deepseek-ai/DeepSeek-V4-Flash-0731}:/models/DeepSeek-V4-Flash-0731:ro
+      - ${CACHE_HOST_PATH:-/media/llm/deepseek-v4-flash-0731-cache}:/root/.cache/deepseek-v4-flash-0731-cache
       - /etc/localtime:/etc/localtime:ro
       - /etc/hosts:/etc/hosts:ro
       - /dev/infiniband:/dev/infiniband
-      # Backport https://github.com/sgl-project/sglang/pull/34600 onto v0.5.17
-      # （streaming tool-call / reasoning parser）
-      # Backport https://github.com/sgl-project/sglang/pull/31700 / #32609
-      # （DP attention gather：否则双节点输出 token 乱码）
-      - ../sglang-patches/deepseekv32_detector.py:/sgl-workspace/sglang/python/sglang/srt/function_call/deepseekv32_detector.py:ro
-      - ../sglang-patches/reasoning_parser.py:/sgl-workspace/sglang/python/sglang/srt/parser/reasoning_parser.py:ro
-      - ../sglang-patches/deepseek_v4.py:/sgl-workspace/sglang/python/sglang/srt/models/deepseek_v4.py:ro
-      - ../sglang-patches/deepseek_v4_nextn.py:/sgl-workspace/sglang/python/sglang/srt/models/deepseek_v4_nextn.py:ro
-      # 长上下文提前 EOS 症状补丁（sitecustomize → tokenizer ignore_eos）
-      - ../sglang-patches/sitecustomize.py:/usr/local/lib/python3.12/dist-packages/sitecustomize.py:ro
-      - ../sglang-patches/long_ctx_ignore_eos.py:/usr/local/lib/python3.12/dist-packages/long_ctx_ignore_eos.py:ro
+      # v0.5.18 已内置 DeepSeek V4 parser、DP gather、fused kernel 与 multi-stream 优化；
+      # 禁止用旧版补丁覆盖镜像源码。
     cap_add:
       - SYS_PTRACE
     security_opt:

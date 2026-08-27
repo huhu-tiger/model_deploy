@@ -11,7 +11,8 @@
 #   PREFIX_MODES=cache_miss ./test_context_sweep.sh
 #   CONFIG=/path/to/content.json ./test_context_sweep.sh
 #
-# 默认只跑 cache_miss：每条开头不同，尽量不命中 prefix cache。
+# 默认同时跑 cache_miss（冷缓存）和 cache_hit（共享前缀预热后的热缓存）。
+# 默认档位为 4/8/16/32/64/128/256/300K，128K 并发为 2。
 # 正文用汉字「测」铺满（与 max_length 相同），末尾要求连续输出数字，而不是只回复 OK。
 # 正文/填充/模式在 config/content.json。
 # ============================================================================
@@ -27,6 +28,7 @@ cd "${SCRIPT_DIR}"
 
 # --- 目标服务 ---------------------------------------------------------------
 API_BASE="${API_BASE:-http://127.0.0.1:30001}"
+CACHE_BASE_URL="${CACHE_BASE_URL:-}"
 API_KEY="${API_KEY:-}"
 MODEL_NAME="${MODEL_NAME:-}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-}"
@@ -41,10 +43,11 @@ RESERVE_TOKENS="${RESERVE_TOKENS:-}"
 CONTEXT_FRACTIONS="${CONTEXT_FRACTIONS:-}"
 
 # --- 并发 / 超时 ------------------------------------------------------------
-# PARALLEL 单个数字 = 中位档位的并发；更大上下文依次减半，更小依次加倍。
+# PARALLEL 单个数字 = PARALLEL_ANCHOR_K 档位的并发；上下文每升/降一档，并发减半/翻倍。
 # 未设环境变量时从 config/content.json 读取。
 PARALLEL="${PARALLEL:-}"
 PARALLEL_MAX="${PARALLEL_MAX:-}"
+PARALLEL_ANCHOR_K="${PARALLEL_ANCHOR_K:-}"
 NUMBER_MULT="${NUMBER_MULT:-}"
 NUMBER_MAX="${NUMBER_MAX:-}"
 CONNECT_TIMEOUT="${CONNECT_TIMEOUT:-30}"
@@ -53,12 +56,29 @@ TOTAL_TIMEOUT="${TOTAL_TIMEOUT:-}"
 DURATION="${DURATION:-}"
 
 # --- 其它 -------------------------------------------------------------------
-EXTRA_ARGS="${EXTRA_ARGS:-{\"chat_template_kwargs\":{\"enable_thinking\":false}}}"
+if [[ -z "${EXTRA_ARGS:-}" ]]; then
+  EXTRA_ARGS='{"chat_template_kwargs":{"enable_thinking":false},"ignore_eos":true}'
+fi
 SWANLAB="${SWANLAB:-0}"
 SLEEP_BETWEEN="${SLEEP_BETWEEN:-8}"
 BENCH_NAME="${BENCH_NAME:-}"
 CONFIG="${CONFIG:-${SCRIPT_DIR}/config/content.json}"
 PREFIX_MODES="${PREFIX_MODES:-}"
+
+if [[ -z "${CACHE_BASE_URL}" ]]; then
+  CACHE_BASE_URL="$(python3 -c '
+import sys
+from urllib.parse import urlsplit, urlunsplit
+url = urlsplit(sys.argv[1])
+host = url.hostname or "127.0.0.1"
+netloc = f"[{host}]" if ":" in host else host
+if url.username:
+    auth = url.username + ((":" + url.password) if url.password else "")
+    netloc = auth + "@" + netloc
+netloc += ":30003"
+print(urlunsplit((url.scheme or "http", netloc, "", "", "")))
+' "${API_BASE}")" || die "无法从 API_BASE 推导 CACHE_BASE_URL"
+fi
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
 OUT_ROOT="${SCRIPT_DIR}/outputs/${STAMP}/context_sweep"
@@ -79,6 +99,7 @@ cfg_get() {
 
 [[ -n "${PARALLEL}" ]] || PARALLEL="$(cfg_get parallel)"
 [[ -n "${PARALLEL_MAX}" ]] || PARALLEL_MAX="$(cfg_get parallel_max)"
+[[ -n "${PARALLEL_ANCHOR_K}" ]] || PARALLEL_ANCHOR_K="$(cfg_get parallel_anchor_k)"
 [[ -n "${NUMBER_MULT}" ]] || NUMBER_MULT="$(cfg_get number_mult)"
 [[ -n "${NUMBER_MAX}" ]] || NUMBER_MAX="$(cfg_get number_max)"
 [[ -n "${MAX_TOKENS}" ]] || MAX_TOKENS="$(cfg_get max_tokens)"
@@ -87,7 +108,8 @@ cfg_get() {
 [[ -n "${CONTEXT_LEVELS}" ]] || CONTEXT_LEVELS="$(cfg_get context_levels)"
 [[ -n "${CONTEXT_FRACTIONS}" ]] || CONTEXT_FRACTIONS="$(cfg_get context_fractions)"
 [[ -n "${PARALLEL}" ]] || die "parallel 未配置"
-[[ -n "${PARALLEL_MAX}" ]] || PARALLEL_MAX=16
+[[ -n "${PARALLEL_MAX}" ]] || PARALLEL_MAX=64
+[[ -n "${PARALLEL_ANCHOR_K}" ]] || PARALLEL_ANCHOR_K=128
 [[ -n "${NUMBER_MULT}" ]] || NUMBER_MULT=2
 [[ -n "${NUMBER_MAX}" ]] || NUMBER_MAX=16
 [[ -n "${MAX_TOKENS}" ]] || MAX_TOKENS=256
@@ -137,7 +159,7 @@ done
 CONTEXT_KS=("${CONTEXT_KS_REV[@]}")
 
 PAR_PLAN="$(
-  python3 "${CTX_PY}" plan --levels "${LEVELS_CSV}" --spec "${PARALLEL}" --max-parallel "${PARALLEL_MAX}"
+  python3 "${CTX_PY}" plan --levels "${LEVELS_CSV}" --spec "${PARALLEL}" --max-parallel "${PARALLEL_MAX}" --anchor-k "${PARALLEL_ANCHOR_K}"
 )" || die "计算并发方案失败"
 
 MODE_ARGS=(--config "${CONFIG}" modes)
@@ -146,17 +168,19 @@ MODES_CSV="$(python3 "${CONFIG_PY}" "${MODE_ARGS[@]}")" || die "读取前缀模�
 IFS=',' read -r -a PREFIX_MODE_IDS <<< "${MODES_CSV}"
 [[ ${#PREFIX_MODE_IDS[@]} -gt 0 ]] || die "没有启用的前缀模式"
 
-OUT_ROOT="${OUT_ROOT}" MODEL_NAME="${MODEL_NAME}" API_URL="${API_URL}" MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
-PREFIX_MODES_CSV="${MODES_CSV}" CONFIG_PATH="${CONFIG}" PAR_PLAN="${PAR_PLAN}" PARALLEL_SPEC="${PARALLEL}" python3 -c '
+OUT_ROOT="${OUT_ROOT}" MODEL_NAME="${MODEL_NAME}" API_URL="${API_URL}" CACHE_BASE_URL="${CACHE_BASE_URL}" MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
+PREFIX_MODES_CSV="${MODES_CSV}" CONFIG_PATH="${CONFIG}" PAR_PLAN="${PAR_PLAN}" PARALLEL_SPEC="${PARALLEL}" PARALLEL_ANCHOR_K="${PARALLEL_ANCHOR_K}" python3 -c '
 import json, os, pathlib
 p = pathlib.Path(os.environ["OUT_ROOT"]) / "sweep_meta.json"
 p.write_text(json.dumps({
     "model": os.environ["MODEL_NAME"],
     "url": os.environ["API_URL"],
+    "cache_base_url": os.environ["CACHE_BASE_URL"],
     "max_model_len": int(os.environ["MAX_MODEL_LEN"]),
     "prefix_modes": [x for x in os.environ.get("PREFIX_MODES_CSV", "").split(",") if x],
     "config": os.environ.get("CONFIG_PATH", ""),
     "parallel_spec": os.environ.get("PARALLEL_SPEC", ""),
+    "parallel_anchor_k": int(os.environ.get("PARALLEL_ANCHOR_K", "0") or 0),
     "parallel_plan": os.environ.get("PAR_PLAN", ""),
 }, ensure_ascii=False, indent=2), encoding="utf-8")
 '
@@ -171,7 +195,7 @@ echo "API:           ${API_URL}"
 echo "Model:         ${MODEL_NAME}"
 echo "max_model_len: ${MAX_MODEL_LEN} tokens  ($((MAX_MODEL_LEN / K_UNIT))K)"
 echo "档位:          ${CONTEXT_KS[*]} K"
-echo "并发方案:      ${PAR_PLAN}  (PARALLEL=${PARALLEL}，中位数用在中间档，上限 ${PARALLEL_MAX})"
+echo "并发方案:      ${PAR_PLAN}  (${PARALLEL_ANCHOR_K}K 并发=${PARALLEL}，上下文逐档减半/翻倍，上限 ${PARALLEL_MAX})"
 echo "请求数:        parallel×${NUMBER_MULT}，单档最多 ${NUMBER_MAX}"
 echo "前缀模式:      ${PREFIX_MODE_IDS[*]}  (配置 ${CONFIG})"
 echo "max_tokens:    ${MAX_TOKENS}  reserve=${RESERVE_TOKENS}"
@@ -260,18 +284,29 @@ run_one() {
   return "${rc}"
 }
 
+reset_cache_or_die() {
+  local ctx_k="$1"
+  local mode="$2"
+  local attempt reset_json
+  local reset_args=(--base "${CACHE_BASE_URL}" --reset-cache --timeout 30)
+  [[ -n "${API_KEY}" ]] && reset_args+=(--api-key "${API_KEY}")
+  for attempt in 1 2 3 4 5 6; do
+    reset_json="$(python3 "${API_PY}" "${reset_args[@]}" 2>/dev/null || true)"
+    if echo "${reset_json}" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("ok") else 1)' 2>/dev/null; then
+      log "已清空 prefix cache  ctx=${ctx_k}K mode=${mode} attempt=${attempt}"
+      return 0
+    fi
+    log "清空 prefix cache 失败  ctx=${ctx_k}K mode=${mode} attempt=${attempt}/6；5 秒后重试"
+    sleep 5
+  done
+  die "无法清空 prefix cache，停止测试以避免污染冷/热结果: ${reset_json}"
+}
+
 overall_fail=0
 for mode in "${PREFIX_MODE_IDS[@]}"; do
   warmup="$(python3 "${CONFIG_PY}" --config "${CONFIG}" warmup --mode "${mode}")" || die "读取 warmup 失败: ${mode}"
   for ctx_k in "${CONTEXT_KS[@]}"; do
-    RESET_ARGS=(--base "${API_BASE}" --reset-cache --timeout 10)
-    [[ -n "${API_KEY}" ]] && RESET_ARGS+=(--api-key "${API_KEY}")
-    RESET_JSON="$(python3 "${API_PY}" "${RESET_ARGS[@]}" 2>/dev/null || true)"
-    if echo "${RESET_JSON}" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("ok") else 1)' 2>/dev/null; then
-      log "已清空 prefix cache  ctx=${ctx_k}K"
-    else
-      log "未能清空 prefix cache（接口可能不支持），继续测 ctx=${ctx_k}K"
-    fi
+    reset_cache_or_die "${ctx_k}" "${mode}"
     prompt_tokens="$(
       python3 "${CTX_PY}" budget \
         --max-model-len "${MAX_MODEL_LEN}" \
@@ -289,7 +324,7 @@ for mode in "${PREFIX_MODE_IDS[@]}"; do
       log "${ctx_k}K 档 prompt 从 ${target_tokens} 收到 ${prompt_tokens}（预留 max_tokens+reserve）"
     fi
 
-    PAR_ARGS=(parallel --ctx-k "${ctx_k}" --levels "${LEVELS_CSV}" --spec "${PARALLEL}" --max-parallel "${PARALLEL_MAX}")
+    PAR_ARGS=(parallel --ctx-k "${ctx_k}" --levels "${LEVELS_CSV}" --spec "${PARALLEL}" --max-parallel "${PARALLEL_MAX}" --anchor-k "${PARALLEL_ANCHOR_K}")
     par_list="$(python3 "${CTX_PY}" "${PAR_ARGS[@]}")" || die "计算并发列表失败 ctx=${ctx_k}K"
     [[ -n "${par_list}" ]] || die "并发列表为空 ctx=${ctx_k}K"
 

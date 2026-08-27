@@ -16,27 +16,14 @@ REMOTE_DEPLOY_DIR="${REMOTE_DEPLOY_DIR:-${NODE44_DIR}}"
 
 MASTER_DIST_WAIT_SEC="${MASTER_DIST_WAIT_SEC:-900}"
 MASTER_DIST_POLL_SEC="${MASTER_DIST_POLL_SEC:-2}"
-# SGLang --enable-dp-attention 不 bind dist_init_port；handshake = dist_init + 13
-# python/sglang/srt/utils.py DP_ATTENTION_HANDSHAKE_PORT_DELTA
-SGLANG_DP_HANDSHAKE_PORT_DELTA="${SGLANG_DP_HANDSHAKE_PORT_DELTA:-13}"
-
+SERVICE_READY_WAIT_SEC="${SERVICE_READY_WAIT_SEC:-1800}"
 MODEL_HOST_PATH="${MODEL_HOST_PATH:-/media/llm/deepseek-ai/DeepSeek-V4-Flash-0731}"
-DOCKER_IMAGE="${DOCKER_IMAGE:-model.vnet.com/sjhl/sglang:v0.5.17}"
+CACHE_HOST_PATH="${CACHE_HOST_PATH:-/media/llm/deepseek-v4-flash-0731-cache}"
+DOCKER_IMAGE="${DOCKER_IMAGE:-model.vnet.com/sjhl/sglang:v0.5.18}"
 
 CONTAINER_LLM="${CONTAINER_LLM:-deepseek-v4-flash}"
 CONTAINER_NGINX="${CONTAINER_NGINX:-nginx-deepseek-v4-flash-proxy}"
 COMPOSE_LLM_SVC="${COMPOSE_LLM_SVC:-deepseek-v4-flash}"
-
-# 与单机 0731 同一套补丁（PR #34600）；本目录 sglang-patches 为指向该目录的 symlink
-PATCH_SRC="${PATCH_SRC:-${ROOT}/../deepseek-v4-flash-0731/sglang-patches}"
-PATCH_DIR="${ROOT}/sglang-patches"
-PATCH_DETECTOR="deepseekv32_detector.py"
-PATCH_REASONING="reasoning_parser.py"
-PATCH_DSV4="deepseek_v4.py"
-PATCH_DSV4_NEXTN="deepseek_v4_nextn.py"
-PATCH_LONG_CTX_EOS="long_ctx_ignore_eos.py"
-PATCH_SITECUSTOMIZE="sitecustomize.py"
-REMOTE_PATCH_DIR="$(dirname "${REMOTE_DEPLOY_DIR}")/sglang-patches"
 
 REMOTE_COMPOSE_CMD=""
 LOCAL_COMPOSE_CMD=""

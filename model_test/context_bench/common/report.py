@@ -127,6 +127,15 @@ def _fmt(value: Any, digits: int = 2) -> str:
     return f"{num:.{digits}f}"
 
 
+def _mode_label(mode: Any) -> str:
+    return {
+        "cache_miss": "冷缓存",
+        "cache_hit": "热缓存",
+        "default": "默认",
+        "": "默认",
+    }.get(str(mode or ""), str(mode or "默认"))
+
+
 def table_rows(runs: list[dict[str, Any]]) -> tuple[list[str], list[list[str]]]:
     headers = [
         "ctx_k", "prefix", "parallel", "status", "prompt", "succ/fail",
@@ -139,7 +148,7 @@ def table_rows(runs: list[dict[str, Any]]) -> tuple[list[str], list[list[str]]]:
         ratio = f"{succ}/{fail}" if succ is not None else "-"
         body.append([
             str(r.get("ctx_k", "-")),
-            str(r.get("prefix_mode") or "-"),
+            _mode_label(r.get("prefix_mode")),
             str(r.get("parallel", "-")),
             str(r.get("status", "-")),
             str(r.get("prompt_tokens") if r.get("prompt_tokens") is not None else "-"),
@@ -271,6 +280,23 @@ def runs_frame(runs: list[dict[str, Any]]):
 
 ECHARTS_JS_HOST = "https://assets.pyecharts.org/assets/v6/"
 ECHARTS_JS_URL = ECHARTS_JS_HOST + "echarts.min.js"
+DEFAULT_CHART_COLORS = {
+    "cold_ttft": "#1d4ed8",
+    "cold_latency": "#93c5fd",
+    "hot_ttft": "#15803d",
+    "hot_latency": "#86efac",
+}
+
+
+def chart_colors(config: dict[str, Any] | None = None) -> dict[str, str]:
+    colors = dict(DEFAULT_CHART_COLORS)
+    configured = (config or {}).get("chart_colors")
+    if isinstance(configured, dict):
+        for key in colors:
+            value = configured.get(key)
+            if isinstance(value, str) and value.strip():
+                colors[key] = value.strip()
+    return colors
 
 
 def _use_domestic_echarts_cdn() -> None:
@@ -291,9 +317,35 @@ def _pyecharts_embed(html: str) -> str:
     return f'<script type="text/javascript" src="{ECHARTS_JS_URL}"></script>\n{body_inner}'
 
 
-def _pyecharts_overview(df) -> tuple[str, str]:
-    """柱状图：每个「上下文·并发」一组，两根柱子对比 TTFT 与请求完成时间，直观易读。
-    返回 (完整独立页面 html, 可内嵌的片段 html)；失败则返回 ("", "")。"""
+def _chart_matrix(df):
+    """按上下文/并发对齐冷、热数据，供静态图和交互图共用。"""
+    d = df.sort_values(["ctx_k", "parallel", "prefix_mode"]).drop_duplicates(
+        subset=["ctx_k", "parallel", "prefix_mode"], keep="last"
+    )
+    pairs = sorted({(int(r.ctx_k), int(r.parallel)) for r in d.itertuples()}, key=lambda x: (x[0], x[1]))
+    labels = [f"{ctx}K·并发{parallel}" for ctx, parallel in pairs]
+
+    def values(mode: str, metric: str) -> list[float | None]:
+        indexed = {
+            (int(r.ctx_k), int(r.parallel)): getattr(r, metric)
+            for r in d[d["prefix_mode"] == mode].itertuples()
+        }
+        out: list[float | None] = []
+        for pair in pairs:
+            value = indexed.get(pair)
+            out.append(None if value is None or value != value else float(value))
+        return out
+
+    return labels, {
+        "cold_ttft": values("cache_miss", "ttft_s"),
+        "hot_ttft": values("cache_hit", "ttft_s"),
+        "cold_latency": values("cache_miss", "latency_s"),
+        "hot_latency": values("cache_hit", "latency_s"),
+    }
+
+
+def _pyecharts_overview(df, colors: dict[str, str]) -> tuple[str, str]:
+    """按冷/热缓存分组展示 TTFT 与请求完成时间。"""
     try:
         from pyecharts import options as opts
         from pyecharts.charts import Bar
@@ -302,43 +354,47 @@ def _pyecharts_overview(df) -> tuple[str, str]:
     if df.empty:
         return "", ""
 
-    d = df.sort_values(["ctx_k", "parallel"]).drop_duplicates(subset=["label"], keep="last")
-    labels = d["label"].tolist()
-
-    def col_values(col: str) -> list[float | None]:
-        return [None if v != v or v is None else round(float(v), 2) for v in d[col]]
-
-    bar = Bar(init_opts=opts.InitOpts(width="1100px", height="480px", theme="white"))
+    labels, series = _chart_matrix(df)
+    finite_values = [v for values in series.values() for v in values if v is not None]
+    y_max = round(max(finite_values) * 1.18, 2) if finite_values else None
+    bar = Bar(init_opts=opts.InitOpts(width="1200px", height="520px", theme="white"))
     bar.add_xaxis(labels)
-    bar.add_yaxis(
-        "首字延迟 TTFT", col_values("ttft_s"),
-        itemstyle_opts=opts.ItemStyleOpts(color="#2563eb"),
-        label_opts=opts.LabelOpts(position="top", formatter="{c}s"),
-        category_gap="30%",
-    )
-    bar.add_yaxis(
-        "请求完成时间", col_values("latency_s"),
-        itemstyle_opts=opts.ItemStyleOpts(color="#f97316"),
-        label_opts=opts.LabelOpts(position="top", formatter="{c}s"),
-        category_gap="30%",
-    )
+    for name, key in (
+        ("冷缓存 TTFT", "cold_ttft"),
+        ("冷缓存完成时间", "cold_latency"),
+        ("热缓存 TTFT", "hot_ttft"),
+        ("热缓存完成时间", "hot_latency"),
+    ):
+        values = [None if v is None else round(v, 2) for v in series[key]]
+        bar.add_yaxis(
+            name, values,
+            itemstyle_opts=opts.ItemStyleOpts(color=colors[key]),
+            label_opts=opts.LabelOpts(is_show=False),
+            category_gap="25%",
+        )
     bar.set_global_opts(
-        title_opts=opts.TitleOpts(title="长上下文压测：TTFT vs 请求完成时间"),
+        title_opts=opts.TitleOpts(title="长上下文压测：冷缓存 vs 热缓存"),
         tooltip_opts=opts.TooltipOpts(trigger="axis", axis_pointer_type="shadow"),
-        legend_opts=opts.LegendOpts(pos_top="0%", pos_right="4%"),
-        xaxis_opts=opts.AxisOpts(
-            name="上下文长度 · 并发",
-            axislabel_opts=opts.LabelOpts(interval=0, rotate=15),
-        ),
-        yaxis_opts=opts.AxisOpts(name="秒"),
+        legend_opts=opts.LegendOpts(pos_top="7%", pos_left="center"),
+        xaxis_opts=opts.AxisOpts(name="上下文长度 · 并发", axislabel_opts=opts.LabelOpts(interval=0, rotate=15)),
+        yaxis_opts=opts.AxisOpts(name="秒", max_=y_max),
     )
     _use_domestic_echarts_cdn()
     full_html = bar.render_embed()
+    full_html = re.sub(
+        r"(?:\\u[0-9a-fA-F]{4})+",
+        lambda match: match.group(0).encode("ascii").decode("unicode_escape"),
+        full_html,
+    )
     return full_html, _pyecharts_embed(full_html)
 
 
-def write_charts(runs: list[dict[str, Any]], out_dir: Path) -> tuple[list[Path], str]:
-    """一张总览图：每个「上下文·并发」一组，柱状对比 TTFT 与请求完成时间。"""
+def write_charts(
+    runs: list[dict[str, Any]],
+    out_dir: Path,
+    colors: dict[str, str] | None = None,
+) -> tuple[list[Path], str]:
+    """生成明确区分冷、热缓存的 TTFT 与请求完成时间总览图。"""
     np, _pd, plt = _require_pandas_mpl()
     ok = _ok_runs(runs)
     if not ok:
@@ -349,30 +405,43 @@ def write_charts(runs: list[dict[str, Any]], out_dir: Path) -> tuple[list[Path],
     out_dir.mkdir(parents=True, exist_ok=True)
     _setup_chinese_font(plt)
 
-    d = df.sort_values(["ctx_k", "parallel"]).drop_duplicates(subset=["label"], keep="last")
-    labels = d["label"].tolist()
-    ttft = d["ttft_s"].to_numpy(dtype=float)
-    latency = d["latency_s"].to_numpy(dtype=float)
+    labels, series = _chart_matrix(df)
+    colors = colors or chart_colors()
     x = np.arange(len(labels))
-    width = 0.36
+    width = 0.2
+    specs = (
+        ("cold_ttft", -1.5, colors["cold_ttft"], "冷缓存 TTFT"),
+        ("cold_latency", -0.5, colors["cold_latency"], "冷缓存完成时间"),
+        ("hot_ttft", 0.5, colors["hot_ttft"], "热缓存 TTFT"),
+        ("hot_latency", 1.5, colors["hot_latency"], "热缓存完成时间"),
+    )
 
-    fig, ax = plt.subplots(figsize=(max(8.0, len(labels) * 1.4), 5.6))
-    bars1 = ax.bar(x - width / 2, ttft, width, color="#2563eb", label="首字延迟 TTFT")
-    bars2 = ax.bar(x + width / 2, latency, width, color="#f97316", label="请求完成时间")
-    for bars in (bars1, bars2):
-        ax.bar_label(bars, fmt="%.1f", padding=2, fontsize=9)
+    fig, ax = plt.subplots(figsize=(max(9.0, len(labels) * 1.5), 5.8))
+    for key, offset, color, label in specs:
+        values = np.array([np.nan if v is None else v for v in series[key]], dtype=float)
+        bars = ax.bar(x + offset * width, values, width, color=color, label=label)
+        ax.bar_label(bars, fmt="%.1f", padding=2, fontsize=8)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=15, ha="right")
     ax.set_ylabel("秒")
-    ax.set_title("长上下文压测：TTFT vs 请求完成时间")
+    finite_values = [v for values in series.values() for v in values if v is not None]
+    if finite_values:
+        ax.set_ylim(top=max(finite_values) * 1.18)
+    ax.set_title("长上下文压测：冷缓存 vs 热缓存", pad=46)
     ax.grid(True, axis="y", alpha=0.3)
-    ax.legend(loc="upper left", fontsize=9)
-    fig.tight_layout()
+    ax.legend(
+        loc="lower center",
+        bbox_to_anchor=(0.5, 1.02),
+        fontsize=9,
+        ncol=4,
+        frameon=False,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
     png = out_dir / "overview.png"
-    fig.savefig(png, dpi=140)
+    fig.savefig(png, dpi=140, bbox_inches="tight")
     plt.close(fig)
 
-    full_html, embed_html = _pyecharts_overview(df)
+    full_html, embed_html = _pyecharts_overview(df, colors)
     if full_html:
         (out_dir / "overview.html").write_text(full_html, encoding="utf-8")
     return [png], embed_html
@@ -502,6 +571,13 @@ def write_report(root: Path) -> int:
             meta.update(json.loads(path.read_text(encoding="utf-8")))
     if meta.get("id") and not meta.get("model"):
         meta["model"] = meta["id"]
+    config: dict[str, Any] = {}
+    config_path = root / "content.json"
+    if config_path.exists():
+        loaded = json.loads(config_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            config = loaded
+    colors = chart_colors(config)
     runs = collect_runs(root)
     headers, body = table_rows(runs)
     ascii_table = render_ascii(headers, body)
@@ -514,7 +590,7 @@ def write_report(root: Path) -> int:
         cmp_headers, cmp_body = cache_compare_rows(runs)
         if cmp_body:
             md += "\n\n## 缓存命中 vs 不命中\n\n" + render_markdown(cmp_headers, cmp_body) + "\n"
-        pngs, chart_embed_html = write_charts(runs, root / "charts")
+        pngs, chart_embed_html = write_charts(runs, root / "charts", colors)
     except RuntimeError as exc:
         print(f"[WARN] {exc}", file=sys.stderr)
 

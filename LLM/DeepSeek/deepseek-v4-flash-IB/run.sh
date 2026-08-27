@@ -23,7 +23,7 @@ DeepSeek-V4-Flash 双节点部署（配置: cluster.env，推荐 make 入口）
   ./run.sh status       # 容器状态
   ./run.sh logs [svc]   # 本机日志（默认 deepseek-v4-flash）
   ./run.sh master       # 仅本机 master
-  ./run.sh sync         # scp worker compose + cluster.env + sglang-patches
+  ./run.sh sync         # scp worker compose + cluster.env
   ./run.sh worker       # 仅远程 worker
 
 首次部署:
@@ -40,7 +40,9 @@ cluster.env 主要字段:
 
 可选环境变量（可写在 cluster.env）:
   MASTER_DIST_WAIT_SEC  等待 dist-init 秒数（默认 900）
+  SERVICE_READY_WAIT_SEC 等待 API 健康检查秒数（默认 1800）
   MODEL_HOST_PATH       模型路径
+  CACHE_HOST_PATH       DeepGEMM/JIT 缓存路径
   DOCKER_IMAGE          SGLang 镜像
 EOF
 }

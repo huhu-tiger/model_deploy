@@ -84,29 +84,21 @@ check_local_model_path() {
   [[ -d "${MODEL_HOST_PATH}" ]] || die "本机缺少模型目录 ${MODEL_HOST_PATH}"
 }
 
-check_local_patches() {
-  log "检查 SGLang 补丁 ${PATCH_SRC}..."
-  [[ -f "${PATCH_SRC}/${PATCH_DETECTOR}" ]] \
-    || die "缺少 ${PATCH_SRC}/${PATCH_DETECTOR}（引用 deepseek-v4-flash-0731/sglang-patches）"
-  [[ -f "${PATCH_SRC}/${PATCH_REASONING}" ]] \
-    || die "缺少 ${PATCH_SRC}/${PATCH_REASONING}（引用 deepseek-v4-flash-0731/sglang-patches）"
-  [[ -f "${PATCH_SRC}/${PATCH_DSV4}" ]] \
-    || die "缺少 ${PATCH_SRC}/${PATCH_DSV4}（PR #31700 DP attention gather 补丁）"
-  [[ -f "${PATCH_SRC}/${PATCH_DSV4_NEXTN}" ]] \
-    || die "缺少 ${PATCH_SRC}/${PATCH_DSV4_NEXTN}（PR #31700 NextN gather 补丁）"
-  [[ -f "${PATCH_SRC}/${PATCH_LONG_CTX_EOS}" ]] \
-    || die "缺少 ${PATCH_SRC}/${PATCH_LONG_CTX_EOS}（长上下文 ignore_eos 补丁）"
-  [[ -f "${PATCH_SRC}/${PATCH_SITECUSTOMIZE}" ]] \
-    || die "缺少 ${PATCH_SRC}/${PATCH_SITECUSTOMIZE}（sitecustomize 入口）"
-  [[ -e "${PATCH_DIR}/${PATCH_DETECTOR}" ]] \
-    || die "缺少 ${PATCH_DIR}/${PATCH_DETECTOR}（请保持 sglang-patches → 0731 的 symlink）"
-  [[ -e "${PATCH_DIR}/${PATCH_DSV4}" ]] \
-    || die "缺少 ${PATCH_DIR}/${PATCH_DSV4}（请保持 sglang-patches → 0731 的 symlink）"
+check_local_cache_path() {
+  log "检查本机缓存目录 ${CACHE_HOST_PATH}..."
+  mkdir -p "${CACHE_HOST_PATH}" || die "无法创建本机缓存目录 ${CACHE_HOST_PATH}"
+  [[ -w "${CACHE_HOST_PATH}" ]] || die "本机缓存目录不可写 ${CACHE_HOST_PATH}"
 }
 
 check_remote_model_path() {
   log "检查远程模型目录 ${MODEL_HOST_PATH}..."
   remote "test -d '${MODEL_HOST_PATH}'" || die "远程缺少模型目录 ${MODEL_HOST_PATH}（${REMOTE_HOST}）"
+}
+
+check_remote_cache_path() {
+  log "检查远程缓存目录 ${CACHE_HOST_PATH}..."
+  remote "mkdir -p '${CACHE_HOST_PATH}' && test -w '${CACHE_HOST_PATH}'" \
+    || die "远程缓存目录无法创建或不可写 ${CACHE_HOST_PATH}（${REMOTE_HOST}）"
 }
 
 check_local_image() {
@@ -160,7 +152,7 @@ ensure_env() {
       check_local_gpu
       check_local_ib
       check_local_model_path
-      check_local_patches
+      check_local_cache_path
       check_local_image
       log "本机 master 环境检查通过"
       ;;
@@ -184,12 +176,12 @@ ensure_env() {
       check_remote_gpu
       check_remote_ib
       check_remote_model_path
+      check_remote_cache_path
       check_remote_image
       log "远程 worker 环境检查通过"
       ;;
     sync)
       check_local_compose_config "${WORKER_COMPOSE}" "node-44"
-      check_local_patches
       check_remote_ssh
       log "同步前环境检查通过"
       ;;
@@ -205,7 +197,7 @@ ensure_env() {
       check_local_gpu
       check_local_ib
       check_local_model_path
-      check_local_patches
+      check_local_cache_path
       check_local_image
       check_remote_ssh
       ensure_remote_hosts
@@ -216,6 +208,7 @@ ensure_env() {
       check_remote_gpu
       check_remote_ib
       check_remote_model_path
+      check_remote_cache_path
       check_remote_image
       log "环境检查全部通过"
       ;;

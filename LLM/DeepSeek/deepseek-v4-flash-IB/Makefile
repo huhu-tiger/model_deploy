@@ -16,7 +16,7 @@ export
 endif
 
 export MASTER_IP WORKER_IP MASTER_DIST_PORT REMOTE_USER REMOTE_DEPLOY_DIR
-export MASTER_DIST_WAIT_SEC MODEL_HOST_PATH DOCKER_IMAGE
+export MASTER_DIST_WAIT_SEC SERVICE_READY_WAIT_SEC MODEL_HOST_PATH CACHE_HOST_PATH DOCKER_IMAGE
 
 .PHONY: help init config-check start restart stop check hosts firewall status logs master sync worker
 

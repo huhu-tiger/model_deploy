@@ -26,6 +26,12 @@ DEFAULTS: dict[str, Any] = {
     "parallel_max": 16,
     "number_mult": 2,
     "number_max": 16,
+    "chart_colors": {
+        "cold_ttft": "#1d4ed8",
+        "cold_latency": "#93c5fd",
+        "hot_ttft": "#15803d",
+        "hot_latency": "#86efac"
+    },
     "modes": [
         {"id": "cache_miss", "label": "不命中", "prefix": "unique", "warmup": 0, "enabled": True},
         {"id": "cache_hit", "label": "命中", "prefix": "shared", "warmup": 1, "enabled": False},
@@ -61,10 +67,9 @@ def enabled_modes(cfg: dict[str, Any], only: str = "") -> list[dict[str, Any]]:
         prefix = str(mode.get("prefix") or "").strip()
         if prefix not in ("unique", "shared"):
             raise ValueError(f"模式 {mid} 的 prefix 必须是 unique 或 shared，当前: {prefix!r}")
-        if wanted:
-            if mid not in wanted:
-                continue
-        elif not mode.get("enabled", True):
+        if not mode.get("enabled", True):
+            continue
+        if wanted and mid not in wanted:
             continue
         out.append(mode)
     if wanted:

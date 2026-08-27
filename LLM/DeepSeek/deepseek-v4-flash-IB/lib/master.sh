@@ -16,7 +16,7 @@ master_up() {
   log "启动本机 node-43: ${COMPOSE_FILE}"
   # shellcheck disable=SC2086
   compose -f "${COMPOSE_FILE}" up -d ${extra_flags}
-  log "本机服务已提交启动（API: nginx 30001 / SGLang 30003 / DP handshake $((MASTER_DIST_PORT + SGLANG_DP_HANDSHAKE_PORT_DELTA))）"
+  log "本机服务已提交启动（API: nginx 30001 / SGLang 30003 / distributed rendezvous ${MASTER_DIST_PORT}）"
 }
 
 master_down() {
@@ -25,7 +25,8 @@ master_down() {
     return 0
   fi
   log "停止本机 node-43..."
-  compose -f "${COMPOSE_FILE}" down || true
+  compose -f "${COMPOSE_FILE}" down || die "本机 master 停止失败"
+  master_containers_exist && die "本机相关容器停止后仍然存在"
   log "本机 master 已停止"
 }
 

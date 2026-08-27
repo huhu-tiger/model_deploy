@@ -62,6 +62,7 @@ def auto_parallel(
     median: int = 4,
     levels: Sequence[int] | None = None,
     max_parallel: int = 64,
+    anchor_k: int | None = None,
 ) -> list[int]:
     """按档位相对中位数加减并发。
 
@@ -75,7 +76,7 @@ def auto_parallel(
         return [max(1, int(x)) for x in override]
     if override and len(override) == 1:
         median = int(override[0])
-    return [parallel_at(ctx_k, levels or [ctx_k], median, max_parallel)]
+    return [parallel_at(ctx_k, levels or [ctx_k], median, max_parallel, anchor_k)]
 
 
 def parallel_at(
@@ -83,18 +84,22 @@ def parallel_at(
     levels: Sequence[int],
     median: int,
     max_parallel: int = 64,
+    anchor_k: int | None = None,
 ) -> int:
     median = max(1, int(median))
     cap = max(1, int(max_parallel))
     ordered = sorted({int(x) for x in levels if int(x) > 0}, reverse=True)
     if not ordered:
         return min(cap, median)
-    mid_idx = (len(ordered) - 1) // 2
+    if anchor_k is not None:
+        anchor_idx = min(range(len(ordered)), key=lambda i: abs(ordered[i] - int(anchor_k)))
+    else:
+        anchor_idx = (len(ordered) - 1) // 2
     if ctx_k in ordered:
         idx = ordered.index(int(ctx_k))
     else:
         idx = min(range(len(ordered)), key=lambda i: abs(ordered[i] - int(ctx_k)))
-    steps = idx - mid_idx
+    steps = idx - anchor_idx
     if steps < 0:
         value = max(1, median // (2 ** (-steps)))
     else:
@@ -107,6 +112,7 @@ def parallel_plan(
     median: int = 4,
     override: Sequence[int] | None = None,
     max_parallel: int = 64,
+    anchor_k: int | None = None,
 ) -> list[tuple[int, int]]:
     """各档位实际并发（每档取列表第一个，便于打印）。"""
     out: list[tuple[int, int]] = []
@@ -117,6 +123,7 @@ def parallel_plan(
             median=median,
             levels=levels,
             max_parallel=max_parallel,
+            anchor_k=anchor_k,
         )
         out.append((int(ctx_k), int(vals[0])))
     return out
@@ -187,11 +194,13 @@ def _main() -> int:
     p_par.add_argument("--spec", default="4", help="中位数（单个数字），或多个并发覆盖所有档位")
     p_par.add_argument("--levels", default="", help="逗号分隔档位，如 512,384,256,128,64")
     p_par.add_argument("--max-parallel", type=int, default=64)
+    p_par.add_argument("--anchor-k", type=int, default=0, help="并发基准上下文 K")
 
     p_plan = sub.add_parser("plan", help="打印各档位并发")
     p_plan.add_argument("--spec", default="4")
     p_plan.add_argument("--levels", required=True)
     p_plan.add_argument("--max-parallel", type=int, default=64)
+    p_plan.add_argument("--anchor-k", type=int, default=0, help="并发基准上下文 K")
 
     p_to = sub.add_parser("timeouts", help="计算超时")
     p_to.add_argument("--ctx-k", type=int, required=True)
@@ -233,6 +242,7 @@ def _main() -> int:
                 median=median,
                 levels=_parse_int_list(args.levels) or None,
                 max_parallel=args.max_parallel,
+                anchor_k=args.anchor_k or None,
             )
             print(" ".join(str(x) for x in vals))
         elif args.cmd == "plan":
@@ -248,6 +258,7 @@ def _main() -> int:
                     median=median,
                     levels=levels,
                     max_parallel=args.max_parallel,
+                    anchor_k=args.anchor_k or None,
                 )
                 parts.append(f"{ctx_k}K:{','.join(str(x) for x in vals)}")
             print(" ".join(parts))

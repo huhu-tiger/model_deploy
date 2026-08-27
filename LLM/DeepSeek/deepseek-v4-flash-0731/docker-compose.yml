@@ -1,30 +1,27 @@
-# DeepSeek-V4-Flash-0731 — SGLang 0.5.18 — 双节点 16 卡 H20 + IB
-# node-43: PP stage 0（rank 0，本机），nginx :30001 → SGLang :30003
-# 300K 输入 + 2K 输出低延迟配置：TP=8、PP=2、动态 chunked prefill、Radix prefix cache
-# 冷前缀仍需完整 prefill；TTFT <10s 只针对高命中率的已缓存公共前缀。
+# DeepSeek-V4-Flash-0731 — SGLang 0.5.18 — 单机 H20 × 8 + OpenResty
+# Hardware: H20 96GB × 8（NVLink）| TP8 | FP4 MoE (Marlin) | FP8 KV | DSV4 | DSPARK
+# Target: 300K 输入 + 2K 输出，兼顾长上下文稳定性和 Prefix Cache 吞吐
+# 对外: nginx :30001 → SGLang :30003
+# 启动后观察 available_gpu_mem；建议保留 5–8GB，OOM 时先下调 mem-fraction-static。
 
 services:
   nginx-llm-proxy:
+    # network_mode: host：避免 UFW 拦截 docker bridge → 宿主机 30003
     image: model.vnet.com/sjhl/openresty:1.27.1.2-0-alpine
     container_name: nginx-deepseek-v4-flash-proxy
     restart: unless-stopped
     network_mode: host
     user: "0:0"
-    environment:
-      TZ: Asia/Shanghai
     volumes:
-      - ../nginx.conf:/etc/nginx/nginx.conf:ro
-      - ../conf.d:/etc/nginx/conf.d:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./conf.d:/etc/nginx/conf.d:ro
       - ./logs:/var/log/nginx
       - /etc/localtime:/etc/localtime:ro
     command: ["openresty", "-c", "/etc/nginx/nginx.conf", "-g", "daemon off;"]
-    depends_on:
-      - deepseek-v4-flash
 
   deepseek-v4-flash:
     image: ${DOCKER_IMAGE:-model.vnet.com/sjhl/sglang:v0.5.18}
     container_name: deepseek-v4-flash
-    hostname: ${MASTER_HOSTNAME}
     restart: unless-stopped
     command: >
       sglang serve
@@ -35,26 +32,20 @@ services:
       --kv-cache-dtype fp8_e4m3
       --page-size 256
       --tp 8
-      --pp-size 2
-      --nnodes 2
-      --node-rank 0
-      --dist-init-addr ${MASTER_IP}:${MASTER_DIST_PORT}
-      --dist-timeout 3600
       --moe-runner-backend marlin
       --attention-backend dsv4
+      --speculative-algorithm DSPARK
+      --speculative-dspark-block-size 4
       --swa-full-tokens-ratio 0.1
-      --chunked-prefill-size 12288
-      --enable-dynamic-chunking
+      --chunked-prefill-size 16384
       --max-prefill-tokens 32768
       --prefill-max-requests 1
-      --cuda-graph-max-bs-decode 8
-      --disable-custom-all-reduce
-      --max-running-requests 8
-      --max-queued-requests 16
+      --cuda-graph-max-bs-decode 16
+      --max-running-requests 16
+      --max-queued-requests 32
       --schedule-policy lpm
       --schedule-conservativeness 0.8
       --watchdog-timeout 900
-      --skip-server-warmup
       --disable-flashinfer-autotune
       --preferred-sampling-params '{"temperature":0.1,"top_p":1.0}'
       --enable-metrics
@@ -70,32 +61,20 @@ services:
       SGLANG_JIT_DEEPGEMM_FAST_WARMUP: "1"
       SGLANG_JIT_DEEPGEMM_PRECOMPILE: "0"
       SGLANG_SHARED_EXPERT_TP1: "1"
-      SGLANG_DYNAMIC_CHUNKING_SMOOTH_FACTOR: "0.75"
-      # 排查超长上下文下偶发提前 EOS：WARN 级别只打日志不崩溃
       SGLANG_INVARIANT_CHECK: "1"
       SGLANG_SANITIZE_NAN_LOGITS: "1"
       SGLANG_DSV4_COMPRESS_STATE_DTYPE: "float32"
       PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
-      NCCL_IB_DISABLE: "0"
-      NCCL_IB_HCA: "mlx5_0,mlx5_3,mlx5_4,mlx5_7"
-      NCCL_IB_GID_INDEX: "0"
-      NCCL_IB_QPS_PER_CONNECTION: "4"
-      NCCL_CROSS_NIC: "1"
-      NCCL_MIN_NCHANNELS: "4"
-      NCCL_IBEXT_DISABLE: "0"
-      NCCL_SOCKET_IFNAME: "bond0"
-      GLOO_SOCKET_IFNAME: "bond0"
+      NCCL_P2P_DISABLE: "0"
+      NCCL_SHM_DISABLE: "0"
       NCCL_DEBUG: "WARN"
-      NO_PROXY: "0.0.0.0,localhost,127.0.0.1,${MASTER_IP},${WORKER_IP}"
-      no_proxy: "0.0.0.0,localhost,127.0.0.1,${MASTER_IP},${WORKER_IP}"
+      CUDA_ENABLE_USER_TRIGGERED_COREDUMP: "1"
     volumes:
       - ${MODEL_HOST_PATH:-/media/llm/deepseek-ai/DeepSeek-V4-Flash-0731}:/models/DeepSeek-V4-Flash-0731:ro
       - ${CACHE_HOST_PATH:-/media/llm/deepseek-v4-flash-0731-cache}:/root/.cache/deepseek-v4-flash-0731-cache
       - /etc/localtime:/etc/localtime:ro
-      - /etc/hosts:/etc/hosts:ro
-      - /dev/infiniband:/dev/infiniband
-      # v0.5.18 已内置 DeepSeek V4 parser、DP gather、fused kernel 与 multi-stream 优化；
-      # 禁止用旧版补丁覆盖镜像源码。
+      # v0.5.18 已内置 DeepSeek V4 parser 与相关修复，不再覆盖旧版补丁。
+    # py-spy / 崩溃栈 dump 需要 ptrace；否则只有 Permission denied
     cap_add:
       - SYS_PTRACE
     security_opt:
@@ -106,7 +85,6 @@ services:
     network_mode: host
     ipc: host
     shm_size: "32g"
-    privileged: true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:30003/health"]
       interval: 60s
